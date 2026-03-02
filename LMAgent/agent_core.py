@@ -93,8 +93,6 @@ _IS_WINDOWS = platform.system() == "Windows"
 # =============================================================================
 
 def _load_dotenv() -> None:
-    # FIX: removed the break so that if the first candidate fails, the second
-    # is still tried instead of being silently skipped.
     for env_file in (Path(__file__).parent / ".env", Path.cwd() / ".env"):
         if not env_file.exists():
             continue
@@ -113,7 +111,7 @@ def _load_dotenv() -> None:
                     loaded += 1
             if loaded:
                 print(f"[INFO] Loaded {loaded} variable(s) from {env_file}")
-            break  # stop after the first successfully processed file
+            break
         except Exception as e:
             print(f"[!] Could not read {env_file}: {e}")
             # no break — fall through to try the next candidate
@@ -180,45 +178,27 @@ class Config:
     DESTRUCTIVE_TOOLS = frozenset({"write", "edit", "shell", "git_add",
                                     "git_commit", "git_branch",
                                     "todo_add", "todo_update", "todo_complete"})
-
-    # ── Vision support (v9.5.2-vision) ───────────────────────────────────────
-    # VISION_ENABLED controls how agent_tools._detect_vision_support() behaves:
-    #   "auto"  — probe LM Studio's /api/v1/models on first use (default)
-    #   "true"  — always report vision available (skip the probe)
-    #   "false" — always report no vision (skip the probe, tool hidden)
-    # Set in .env:  VISION_ENABLED=auto
     VISION_ENABLED = os.getenv("VISION_ENABLED", "auto")
-
-    # LLM_BASE_URL is the root of the LM Studio API, used to construct the
-    # /api/v1/models probe URL independently of LLM_URL (which already includes
-    # the full /v1/chat/completions path).
-    # Set in .env:  LLM_BASE_URL=http://localhost:1234
-    LLM_BASE_URL = os.getenv("LLM_BASE_URL", "http://localhost:1234")
-    # ─────────────────────────────────────────────────────────────────────────
+    LLM_BASE_URL   = os.getenv("LLM_BASE_URL", "http://localhost:1234")
 
     @classmethod
     def init(cls) -> None:
         workspace = Path(cls.WORKSPACE)
         for sub in ("sessions", "locks", "todos", "plans", "state", "inbox"):
             (workspace / ".lmagent" / sub).mkdir(parents=True, exist_ok=True)
-        cls._validate()
-        if cls.THINKING_MODEL:
-            Log.info("Thinking model mode: ON (reasoning tokens stripped from context)")
-
-    @classmethod
-    def _validate(cls) -> None:
         if cls.MAX_ITERATIONS < 1:
             raise ValueError("MAX_ITERATIONS must be >= 1")
         try:
             PermissionMode(cls.PERMISSION_MODE)
         except ValueError:
             raise ValueError(f"Invalid PERMISSION_MODE: {cls.PERMISSION_MODE}")
-        valid_vision = {"auto", "true", "false"}
-        if cls.VISION_ENABLED.lower() not in valid_vision:
+        if cls.VISION_ENABLED.lower() not in {"auto", "true", "false"}:
             raise ValueError(
                 f"Invalid VISION_ENABLED: '{cls.VISION_ENABLED}'. "
-                f"Must be one of: {sorted(valid_vision)}"
+                f"Must be one of: {sorted({'auto', 'true', 'false'})}"
             )
+        if cls.THINKING_MODEL:
+            Log.info("Thinking model mode: ON (reasoning tokens stripped from context)")
 
 
 # =============================================================================
@@ -237,7 +217,7 @@ class Colors:
     GRAY    = "\033[38;5;250m"
 
 
-def _supports_truecolor() -> bool:
+def _init_truecolor() -> bool:
     forced = os.environ.get("FORCE_TRUECOLOR")
     if forced == "1": return True
     if forced == "0": return False
@@ -245,26 +225,17 @@ def _supports_truecolor() -> bool:
         if not sys.stdout.isatty(): return False
     except Exception:
         return False
-    colorterm    = os.environ.get("COLORTERM", "").lower()
-    term_program = os.environ.get("TERM_PROGRAM", "").lower()
-    return ("truecolor" in colorterm or "24bit" in colorterm or
-            any(x in term_program for x in
-                ("wezterm", "alacritty", "iterm", "vscode", "windows_terminal")))
+    ct = os.environ.get("COLORTERM", "").lower()
+    tp = os.environ.get("TERM_PROGRAM", "").lower()
+    return ("truecolor" in ct or "24bit" in ct or
+            any(x in tp for x in ("wezterm", "alacritty", "iterm", "vscode", "windows_terminal")))
+
+_TRUECOLOR = _init_truecolor()
 
 
 def _rgb_escape(r: int, g: int, b: int, bold: bool = False) -> str:
     r, g, b = (max(0, min(255, int(x))) for x in (r, g, b))
     return f"{Colors.BOLD if bold else ''}\033[38;2;{r};{g};{b}m"
-
-
-def _rainbow_rgb(i: int, n: int, phase: float = 0.0) -> Tuple[int, int, int]:
-    t = 0.0 if n <= 1 else (i / (n - 1)) * math.pi
-    sin_t = math.sin(t + phase)
-    return (
-        max(0, min(255, int(140 + 100 * sin_t))),
-        max(0, min(255, int(30  + 40  * sin_t))),
-        max(0, min(255, int(180 + 75  * sin_t))),
-    )
 
 
 def colored(text: str, color: str, bold: bool = False) -> str:
@@ -273,7 +244,7 @@ def colored(text: str, color: str, bold: bool = False) -> str:
 
 def rainbow_text(text: str, bold: bool = False, phase: float = 0.0,
                  fallback_color: Optional[str] = None) -> str:
-    if not _supports_truecolor():
+    if not _TRUECOLOR:
         return colored(text, fallback_color or Colors.GREEN, bold=bold)
     try:
         paintable = [c for c in text if c.strip()]
@@ -281,7 +252,11 @@ def rainbow_text(text: str, bold: bool = False, phase: float = 0.0,
         out, idx = [], 0
         for c in text:
             if c.strip():
-                r, g, b = _rainbow_rgb(idx, n, phase=phase)
+                t = 0.0 if n <= 1 else (idx / (n - 1)) * math.pi
+                s = math.sin(t + phase)
+                r = max(0, min(255, int(140 + 100 * s)))
+                g = max(0, min(255, int(30  + 40  * s)))
+                b = max(0, min(255, int(180 + 75  * s)))
                 out.append(f"{_rgb_escape(r, g, b, bold=bold)}{c}{Colors.RESET}")
                 idx += 1
             else:
@@ -303,23 +278,22 @@ class Log:
     def _print(prefix: str, msg: str, color: str) -> None:
         if not Log._is_silent(): print(colored(f"{prefix} {msg}", color))
     @staticmethod
-    def info(msg: str):    Log._print("[INFO]", msg, Colors.CYAN)
-    @staticmethod
-    def success(msg: str): Log._print("[✓]",    msg, Colors.GREEN)
-    @staticmethod
-    def warning(msg: str): Log._print("[!]",    msg, Colors.YELLOW)
-    @staticmethod
-    def error(msg: str):   Log._print("[✗]",    msg, Colors.RED)
-    @staticmethod
     def tool(name: str, args: str):
-        if not Log._is_silent():
-            print(colored(f"[→] {name}({args})", Colors.MAGENTA))
-    @staticmethod
-    def plan(msg: str): Log._print("[📋]", msg, Colors.BLUE)
-    @staticmethod
-    def task(msg: str): Log._print("[🎯]", msg, Colors.YELLOW)
-    @staticmethod
-    def wait(msg: str): Log._print("[⏸️]",  msg, Colors.MAGENTA)
+        if not Log._is_silent(): print(colored(f"[→] {name}({args})", Colors.MAGENTA))
+
+for _lvl, (_pfx, _clr) in {
+    "info":    ("[INFO]", Colors.CYAN),
+    "success": ("[✓]",   Colors.GREEN),
+    "warning": ("[!]",   Colors.YELLOW),
+    "error":   ("[✗]",   Colors.RED),
+    "plan":    ("[📋]",  Colors.BLUE),
+    "task":    ("[🎯]",  Colors.YELLOW),
+    "wait":    ("[⏸️]",  Colors.MAGENTA),
+}.items():
+    setattr(Log, _lvl, staticmethod(
+        (lambda p, c: lambda msg: Log._print(p, msg, c))(_pfx, _clr)
+    ))
+del _lvl, _pfx, _clr
 
 
 # =============================================================================
@@ -348,9 +322,6 @@ def strip_thinking(content: str) -> Tuple[str, str]:
 
 
 def _atomic_write(path: Path, data: Dict[str, Any]) -> None:
-    # FIX: path.with_suffix(".tmp") raises ValueError when path already has an
-    # extension (e.g. "session_20240101.json" → ".json.tmp" is invalid).
-    # Use path.parent / (path.name + ".tmp") which is always safe.
     tmp = path.parent / (path.name + ".tmp")
     tmp.write_text(json.dumps(data, indent=2, default=str), encoding="utf-8")
     path.unlink(missing_ok=True)
@@ -543,7 +514,6 @@ class ShellSession:
         """
         ws = str(self.workspace)
         if _IS_WINDOWS:
-            # Escape single-quotes for PowerShell: ' → ''
             ws_escaped = ws.replace("'", "''")
             cd_reset = f"Set-Location -LiteralPath '{ws_escaped}'\n"
             return (
@@ -661,14 +631,40 @@ def close_shell_session() -> None:
 
 
 # =============================================================================
+# JSON PERSISTENCE HELPER
+# =============================================================================
+
+class _JsonStore:
+    """Minimal atomic JSON persistence used by all manager classes."""
+
+    def __init__(self, path: Path) -> None:
+        self._path = path
+
+    def load(self) -> Optional[Dict[str, Any]]:
+        if not self._path.exists():
+            return None
+        try:
+            return json.loads(self._path.read_text(encoding="utf-8"))
+        except Exception as e:
+            Log.error(f"Failed to load {self._path.name}: {e}")
+            return None
+
+    def save(self, data: Dict[str, Any]) -> None:
+        try:
+            self._path.parent.mkdir(parents=True, exist_ok=True)
+            _atomic_write(self._path, data)
+        except Exception as e:
+            Log.error(f"Failed to save {self._path.name}: {e}")
+
+    def clear(self) -> None:
+        self._path.unlink(missing_ok=True)
+
+
+# =============================================================================
 # FILE EDITOR
 # =============================================================================
 
 class FileEditor:
-    @staticmethod
-    def _normalize(text: str) -> str:
-        return "\n".join(line.rstrip() for line in text.split("\n"))
-
     @staticmethod
     def _fuzzy_search(content: str, search: str,
                       threshold: float = 0.75) -> Optional[Tuple[int, int, float]]:
@@ -694,8 +690,9 @@ class FileEditor:
             return True, content.replace(search, replace), "Exact match"
         if count > 1:
             return False, content, f"Search appears {count} times (must be unique)"
-        norm_content = FileEditor._normalize(content)
-        norm_search  = FileEditor._normalize(search)
+        # Whitespace-insensitive match
+        norm_content = "\n".join(line.rstrip() for line in content.split("\n"))
+        norm_search  = "\n".join(line.rstrip() for line in search.split("\n"))
         if norm_search in norm_content:
             idx            = norm_content.index(norm_search)
             lines_before   = norm_content[:idx].count("\n")
@@ -704,7 +701,7 @@ class FileEditor:
             for i in range(max(0, lines_before - 2),
                            min(len(content_lines), lines_before + 3)):
                 block = "\n".join(content_lines[i: i + search_n_lines])
-                if FileEditor._normalize(block) == norm_search:
+                if "\n".join(line.rstrip() for line in block.split("\n")) == norm_search:
                     new = "\n".join(
                         content_lines[:i]
                         + replace.split("\n")
@@ -725,15 +722,8 @@ class FileEditor:
 # SAFETY
 # =============================================================================
 
-# Windows absolute path
 _WIN_ABS_PATH_RE = re.compile(r'(?<![A-Za-z])[A-Za-z]:[/\\]', re.IGNORECASE)
-
-# POSIX absolute path — matches any / that is not a known safe virtual path
-_POSIX_ABS_PATH_RE = re.compile(
-    r'(?<!\w)/(?!(?:dev/null\b|proc/\b|$))'
-)
-
-# Destructive keywords
+_POSIX_ABS_PATH_RE = re.compile(r'(?<!\w)/(?!(?:dev/null\b|proc/\b|$))')
 _DESTRUCTIVE_CMD_RE = re.compile(
     r'\b(?:'
     r'del|erase|rmdir|rd|remove-item|ri|'
@@ -750,34 +740,16 @@ _DESTRUCTIVE_CMD_RE = re.compile(
     r')\b',
     re.IGNORECASE,
 )
-
-# Block directory-navigation commands entirely
 _NAVIGATION_CMD_RE = re.compile(
-    r'^\s*(?:'
-    r'cd|chdir|'
-    r'set-location|sl|'
-    r'push-location|pushd|'
-    r'pop-location|popd'
-    r')\b',
+    r'^\s*(?:cd|chdir|set-location|sl|push-location|pushd|pop-location|popd)\b',
     re.IGNORECASE,
 )
-
-# Block environment-variable path expansions
 _ENV_VAR_PATH_RE = re.compile(
-    r'(?:'
-    r'\$(?:env:)?[A-Za-z_][A-Za-z0-9_]*'
-    r'|\$\{[^}]+\}'
-    r'|~[/\\]'
-    r'|%[A-Za-z_][A-Za-z0-9_]*%'
-    r')',
+    r'(?:\$(?:env:)?[A-Za-z_][A-Za-z0-9_]*|\$\{[^}]+\}|~[/\\]|%[A-Za-z_][A-Za-z0-9_]*%)',
     re.IGNORECASE,
 )
-
-# Block relative path traversal
 _TRAVERSAL_RE = re.compile(r'\.\.[/\\]')
-
-# UNC paths
-_UNC_PATH_RE = re.compile(r'\\\\[A-Za-z0-9_.$!~#%-]+[/\\]')
+_UNC_PATH_RE  = re.compile(r'\\\\[A-Za-z0-9_.$!~#%-]+[/\\]')
 
 _PATH_STOP_CHARS = frozenset(' \t\n;|&><,)')
 
@@ -786,14 +758,12 @@ def _extract_abs_paths_from_cmd(cmd: str) -> List[str]:
     """Return absolute path strings found anywhere in *cmd*."""
     regex = _WIN_ABS_PATH_RE if _IS_WINDOWS else _POSIX_ABS_PATH_RE
     found: List[str] = []
-
     for match in regex.finditer(cmd):
         start = match.start()
         quote_char: Optional[str] = None
         if start > 0 and cmd[start - 1] in ('"', "'"):
             quote_char = cmd[start - 1]
             start -= 1
-
         end = match.end()
         while end < len(cmd):
             ch = cmd[end]
@@ -804,16 +774,14 @@ def _extract_abs_paths_from_cmd(cmd: str) -> List[str]:
             elif ch in _PATH_STOP_CHARS:
                 break
             end += 1
-
         raw = cmd[start:end].strip('"\'')
         if raw:
             found.append(raw)
-
     return found
 
 
 class Safety:
-    _SENSITIVE: Tuple[str, ...] = (
+    _SENSITIVE: frozenset = frozenset((
         "\\Windows\\System32", "C:\\Windows", "\\Program Files",
         "\\Users\\All Users", "\\ProgramData",
         "id_rsa", "id_ed25519", ".pem", ".key",
@@ -821,7 +789,7 @@ class Safety:
         "/etc/passwd", "/etc/shadow", "/etc/sudoers",
         "/root/", "/boot/", "/sys/",
         "id_rsa", "id_ed25519", ".pem", ".key",
-    )
+    ))
 
     @staticmethod
     def validate_path(workspace: Path, path: str,
@@ -846,8 +814,6 @@ class Safety:
     @staticmethod
     def validate_command(cmd: str,
                          workspace: Optional[Path] = None) -> Tuple[bool, str]:
-        """Validate a shell command before execution."""
-        # 1. Hard blocklist
         cmd_lower = cmd.lower()
         for blocked in Config.BLOCKED_COMMANDS:
             if blocked and blocked.strip().lower() in cmd_lower:
@@ -855,16 +821,12 @@ class Safety:
                     f"Command blocked by BLOCKED_COMMANDS list: '{blocked}'. "
                     "Use the file tools (read, write, edit) instead."
                 )
-
-        # 2. Navigation commands
         if _NAVIGATION_CMD_RE.match(cmd):
             return False, (
                 "Directory-navigation commands (cd, Set-Location, pushd, popd, …) "
                 "are not permitted.  The shell always executes from the workspace "
                 "root — use relative paths or the ls/glob/read file tools instead."
             )
-
-        # 3. Environment-variable paths
         env_match = _ENV_VAR_PATH_RE.search(cmd)
         if env_match:
             return False, (
@@ -872,37 +834,27 @@ class Safety:
                 f"(found: '{env_match.group()}'). "
                 "Use explicit workspace-relative paths or the read/write/ls tools."
             )
-
-        # 4. Relative traversal
         if _TRAVERSAL_RE.search(cmd):
             return False, (
                 "Path traversal (../ or ..\\) is not permitted in shell commands. "
                 "Use workspace-relative paths only."
             )
-
-        # 5. UNC paths
         if _IS_WINDOWS and _UNC_PATH_RE.search(cmd):
             return False, (
                 "UNC network paths (\\\\server\\share) are not permitted in shell "
                 "commands.  Access only local workspace files."
             )
-
-        # 6. Absolute path workspace enforcement
         if workspace is None or not Config.REQUIRE_WORKSPACE:
             return True, ""
-
         abs_paths = _extract_abs_paths_from_cmd(cmd)
         if not abs_paths:
             return True, ""
-
         resolved_ws = workspace.resolve()
-
         for raw_path in abs_paths:
             try:
                 candidate = Path(raw_path).resolve()
             except Exception:
                 continue
-
             try:
                 candidate.relative_to(resolved_ws)
             except ValueError:
@@ -923,7 +875,6 @@ class Safety:
                         "Even with SHELL_WORKSPACE_ONLY=false, destructive "
                         "operations outside the workspace are always blocked."
                     )
-
         return True, ""
 
 
@@ -955,31 +906,19 @@ _TODO_ICONS = {
 
 class TodoManager:
     def __init__(self, workspace: Path, session_id: str):
-        self._file = workspace / ".lmagent" / "todos" / f"{session_id}.json"
+        self._store   = _JsonStore(workspace / ".lmagent" / "todos" / f"{session_id}.json")
         self.todos:    List[TodoItem] = []
         self._next_id = 1
         self._load()
 
     def _load(self) -> None:
-        if not self._file.exists():
-            return
-        try:
-            data          = json.loads(self._file.read_text(encoding="utf-8"))
+        data = self._store.load()
+        if data:
             self.todos    = [TodoItem(**t) for t in data.get("todos", [])]
             self._next_id = data.get("next_id", 1)
-        except Exception:
-            self.todos, self._next_id = [], 1
 
     def _save(self) -> None:
-        try:
-            self._file.parent.mkdir(parents=True, exist_ok=True)
-            self._file.write_text(
-                json.dumps({"todos": [vars(t) for t in self.todos],
-                            "next_id": self._next_id}, indent=2),
-                encoding="utf-8",
-            )
-        except Exception as e:
-            Log.error(f"Failed to save todos: {e}")
+        self._store.save({"todos": [vars(t) for t in self.todos], "next_id": self._next_id})
 
     def add(self, description: str, notes: str = "") -> Dict[str, Any]:
         now  = datetime.now().isoformat()
@@ -1049,33 +988,20 @@ _PLAN_ICONS = {
 
 class PlanManager:
     def __init__(self, workspace: Path, session_id: str):
-        self._file = workspace / ".lmagent" / "plans" / f"{session_id}.json"
+        self._store = _JsonStore(workspace / ".lmagent" / "plans" / f"{session_id}.json")
         self.plan: Optional[Dict[str, Any]] = None
         self.current_step_id: Optional[str] = None
         self._load()
 
     def _load(self) -> None:
-        if not self._file.exists():
-            return
-        try:
-            data                 = json.loads(self._file.read_text(encoding="utf-8"))
+        data = self._store.load()
+        if data:
             self.plan            = data.get("plan")
             self.current_step_id = data.get("current_step_id")
-        except Exception:
-            pass
 
     def _save(self) -> None:
-        if not self.plan:
-            return
-        try:
-            self._file.parent.mkdir(parents=True, exist_ok=True)
-            self._file.write_text(
-                json.dumps({"plan": self.plan, "current_step_id": self.current_step_id},
-                           indent=2),
-                encoding="utf-8",
-            )
-        except Exception as e:
-            Log.error(f"Failed to save plan: {e}")
+        if self.plan:
+            self._store.save({"plan": self.plan, "current_step_id": self.current_step_id})
 
     def create(self, plan_data: Dict[str, Any]) -> Dict[str, Any]:
         self.plan = {
@@ -1184,10 +1110,14 @@ class WaitState:
 
 _WAIT_RE = re.compile(r'WAIT:\s*(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}[^\s:]*):\s*(.+)')
 
-# Prefixes that indicate the WAIT: token is inside a comment, code block, or
-# string literal — mirrors the skip-prefix logic in detect_completion().
-_WAIT_SKIP_PREFIXES = ("#", "//", "/*", "*", "--", "<!--", "'", ">", "```")
-_WAIT_SKIP_KEYWORDS = ("print(", "return ", "def ", "class ", "echo ", "log(")
+# Single compiled regex replacing _WAIT_SKIP_PREFIXES + _WAIT_SKIP_KEYWORDS checks.
+# First branch: lines that start with a comment/code-block token (after whitespace).
+# Second branch: lines containing control-flow or print keywords (case-insensitive).
+_WAIT_SKIP_RE = re.compile(
+    r"""^\s*(?:#|//|/\*|\*|--|<!--|'|>|```)"""
+    r"""|print\(|return |def |class |echo |log\(""",
+    re.IGNORECASE,
+)
 
 
 def detect_wait(content: str) -> Optional[WaitState]:
@@ -1200,15 +1130,10 @@ def detect_wait(content: str) -> Optional[WaitState]:
     """
     if not content or "WAIT:" not in content:
         return None
-
     for line in content.split("\n"):
         if "WAIT:" not in line:
             continue
-        stripped = line.strip()
-        # Skip lines that are clearly inside comments, code blocks, or strings
-        if any(stripped.startswith(p) for p in _WAIT_SKIP_PREFIXES):
-            continue
-        if any(k in stripped.lower() for k in _WAIT_SKIP_KEYWORDS):
+        if _WAIT_SKIP_RE.search(line):
             continue
         m = _WAIT_RE.search(line)
         if not m:
@@ -1254,13 +1179,12 @@ class AgentState:
     @staticmethod
     def from_dict(d: Dict[str, Any]) -> "AgentState":
         return AgentState(
-            session_id          = d.get("session_id", ""),
-            iteration           = d.get("iteration", 0),
-            loop_detector_state = d.get("loop_detector_state", {}),
-            permission_mode     = d.get("permission_mode", Config.PERMISSION_MODE),
-            current_plan_step   = d.get("current_plan_step"),
-            last_checkpoint     = d.get("last_checkpoint", ""),
-            wait_state          = d.get("wait_state"),
+            session_id=d.get("session_id", ""), iteration=d.get("iteration", 0),
+            loop_detector_state=d.get("loop_detector_state", {}),
+            permission_mode=d.get("permission_mode", Config.PERMISSION_MODE),
+            current_plan_step=d.get("current_plan_step"),
+            last_checkpoint=d.get("last_checkpoint", ""),
+            wait_state=d.get("wait_state"),
         )
 
 
@@ -1269,24 +1193,15 @@ class StateManager:
         self._dir = workspace / ".lmagent" / "state"
         self._dir.mkdir(parents=True, exist_ok=True)
 
-    def _path(self, session_id: str) -> Path:
-        return self._dir / f"{session_id}_state.json"
+    def _store(self, session_id: str) -> _JsonStore:
+        return _JsonStore(self._dir / f"{session_id}_state.json")
 
     def save(self, session_id: str, state: AgentState) -> None:
-        try:
-            _atomic_write(self._path(session_id), state.to_dict())
-        except Exception as e:
-            Log.error(f"Failed to save state: {e}")
+        self._store(session_id).save(state.to_dict())
 
     def load(self, session_id: str) -> Optional[AgentState]:
-        p = self._path(session_id)
-        if not p.exists():
-            return None
-        try:
-            return AgentState.from_dict(json.loads(p.read_text(encoding="utf-8")))
-        except Exception as e:
-            Log.error(f"Failed to load state: {e}")
-            return None
+        data = self._store(session_id).load()
+        return AgentState.from_dict(data) if data else None
 
 
 @dataclass
@@ -1328,35 +1243,23 @@ class SessionManager:
         self._dir = workspace / ".lmagent" / "sessions"
         self._dir.mkdir(parents=True, exist_ok=True)
 
-    def _path(self, session_id: str) -> Path:
-        return self._dir / f"{session_id}.json"
+    def _store(self, sid: str) -> _JsonStore:
+        return _JsonStore(self._dir / f"{sid}.json")
 
     def create(self, task: str, parent_session: Optional[str] = None) -> str:
         sid = datetime.now().strftime("%Y%m%d_%H%M%S") + "_" + uuid.uuid4().hex[:6]
         now = datetime.now().isoformat()
-        self.save(sid, [], {
-            "id": sid, "task": task[:200], "created": now, "updated": now,
-            "iterations": 0, "status": "active", "parent_session": parent_session,
-        })
+        self.save(sid, [], {"id": sid, "task": task[:200], "created": now, "updated": now,
+                            "iterations": 0, "status": "active", "parent_session": parent_session})
         return sid
 
     def save(self, sid: str, messages: List[Dict], meta: Dict) -> None:
         meta["updated"] = datetime.now().isoformat()
-        try:
-            _atomic_write(self._path(sid), {"metadata": meta, "messages": messages})
-        except Exception as e:
-            Log.error(f"Failed to save session: {e}")
+        self._store(sid).save({"metadata": meta, "messages": messages})
 
     def load(self, sid: str) -> Optional[Tuple[List[Dict], Dict]]:
-        p = self._path(sid)
-        if not p.exists():
-            return None
-        try:
-            data = json.loads(p.read_text(encoding="utf-8"))
-            return data["messages"], data["metadata"]
-        except Exception as e:
-            Log.error(f"Failed to load session: {e}")
-            return None
+        data = self._store(sid).load()
+        return (data["messages"], data["metadata"]) if data else None
 
     def list_recent(self, limit: int = 10) -> List[Dict]:
         sessions = []
@@ -1476,12 +1379,8 @@ class MessageSummarizer:
             resp.raise_for_status()
             return resp.json()["choices"][0]["message"]["content"].strip()
         except requests.Timeout:
-            # Timeout is expected under load — fall through silently.
             return None
         except Exception as e:
-            # FIX: non-timeout failures (auth errors, bad URL, etc.) were
-            # previously swallowed silently.  Emit a warning so misconfiguration
-            # is visible before falling back to _simple().
             Log.warning(f"LLM summarization failed ({type(e).__name__}: {e}) — "
                         f"falling back to simple summarizer")
             return None
@@ -1517,17 +1416,12 @@ class TaskState:
     @staticmethod
     def from_dict(d: Dict[str, Any]) -> "TaskState":
         return TaskState(
-            objective            = d.get("objective", ""),
-            completion_gate      = d.get("completion_gate", ""),
-            inventory_hash       = d.get("inventory_hash", ""),
-            total_count          = d.get("total_count", 0),
-            processed_count      = d.get("processed_count", 0),
-            remaining_queue      = d.get("remaining_queue", []),
-            rename_map           = d.get("rename_map", {}),
-            last_error           = d.get("last_error", ""),
-            recovery_instruction = d.get("recovery_instruction", ""),
-            next_action          = d.get("next_action", ""),
-            last_updated         = d.get("last_updated", ""),
+            objective=d.get("objective",""), completion_gate=d.get("completion_gate",""),
+            inventory_hash=d.get("inventory_hash",""), total_count=d.get("total_count",0),
+            processed_count=d.get("processed_count",0), remaining_queue=d.get("remaining_queue",[]),
+            rename_map=d.get("rename_map",{}), last_error=d.get("last_error",""),
+            recovery_instruction=d.get("recovery_instruction",""),
+            next_action=d.get("next_action",""), last_updated=d.get("last_updated",""),
         )
 
     def to_message(self) -> Dict[str, Any]:
@@ -1556,33 +1450,23 @@ class TaskState:
 
 class TaskStateManager:
     def __init__(self, workspace: Path, session_id: str):
-        self._file = workspace / ".lmagent" / "state" / f"{session_id}_task.json"
+        self._store = _JsonStore(workspace / ".lmagent" / "state" / f"{session_id}_task.json")
         self.current_state: Optional[TaskState] = None
 
     def checkpoint(self, state: TaskState) -> None:
         state.last_updated = datetime.now().isoformat()
         self.current_state = state
-        try:
-            self._file.parent.mkdir(parents=True, exist_ok=True)
-            _atomic_write(self._file, state.to_dict())
-        except Exception as e:
-            Log.error(f"Failed to checkpoint task state: {e}")
+        self._store.save(state.to_dict())
 
     def load(self) -> Optional[TaskState]:
-        if not self._file.exists():
-            return None
-        try:
-            self.current_state = TaskState.from_dict(
-                json.loads(self._file.read_text(encoding="utf-8"))
-            )
-            return self.current_state
-        except Exception as e:
-            Log.error(f"Failed to load task state: {e}")
-            return None
+        data = self._store.load()
+        if data:
+            self.current_state = TaskState.from_dict(data)
+        return self.current_state
 
     def clear(self) -> None:
         self.current_state = None
-        self._file.unlink(missing_ok=True)
+        self._store.clear()
 
 
 # =============================================================================
@@ -1593,10 +1477,6 @@ class TaskStateManager:
 # =============================================================================
 
 _TASK_STATE_TAG = "[TASK STATE - DO NOT SUMMARIZE]"
-
-# How many messages to always keep as the "recent tail".
-# Intentionally small and fixed — the old formula kept len/2 which prevented
-# any compaction on short-but-token-heavy histories.
 _COMPACTION_TAIL = 10
 
 
@@ -1656,7 +1536,7 @@ def _build_progress_summary(messages: List[Dict[str, Any]]) -> str:
 def _score_messages(messages: List[Dict[str, Any]],
                     keep: int = 20) -> List[Dict[str, Any]]:
     """Return up to *keep* high-priority messages from *messages*, sorted by position."""
-    scored: List[Tuple[int, int]] = []  # (index, priority)
+    scored: List[Tuple[int, int]] = []
     for i, msg in enumerate(messages):
         role    = msg.get("role", "")
         content = str(msg.get("content", ""))
@@ -1744,7 +1624,6 @@ def compact_messages(messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     system_msg     = messages[0]
     task_state_msg = _find_task_state_msg(messages)
 
-    # Classify non-system messages into buckets
     last_plan_msg:  Optional[Dict[str, Any]] = None
     last_todo_msg:  Optional[Dict[str, Any]] = None
     reconcile_msgs: List[Dict[str, Any]]     = []
@@ -1753,7 +1632,7 @@ def compact_messages(messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     for msg in messages[1:]:
         content = str(msg.get("content", ""))
         if msg.get("role") == "system" and _TASK_STATE_TAG in content:
-            continue  # handled separately
+            continue
         if "ACTIVE PLAN:" in content or "NEXT STEP:" in content:
             last_plan_msg = msg
         elif "YOUR TODO LIST:" in content:
@@ -1763,15 +1642,12 @@ def compact_messages(messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         else:
             regular_msgs.append(msg)
 
-    # ── Step 1: scored high-priority messages ────────────────────────────────
     critical      = _score_messages(regular_msgs, Config.KEEP_RECENT_MESSAGES)
     keep_indices: set = {regular_msgs.index(m) for m in critical if m in regular_msgs}
 
-    # ── Step 2: fixed-size tail (FIX: was len//2, now a small constant) ─────
     tail_start = max(0, len(regular_msgs) - _COMPACTION_TAIL)
     keep_indices |= set(range(tail_start, len(regular_msgs)))
 
-    # ── Step 3: keep read-then-response pairs from the recent window ─────────
     for i in range(max(0, len(regular_msgs) - 20), len(regular_msgs)):
         msg = regular_msgs[i]
         if msg.get("role") == "assistant" and msg.get("tool_calls"):
@@ -1791,10 +1667,8 @@ def compact_messages(messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
                     except Exception:
                         pass
 
-    # ── Step 4: ensure tool-call pairs are never split (fixed-point) ─────────
     _pair_tool_calls(regular_msgs, keep_indices)
 
-    # ── Step 5: enforce hard ceiling ─────────────────────────────────────────
     if len(keep_indices) >= len(regular_msgs):
         Log.warning(
             f"Compaction skipped: all {len(regular_msgs)} regular messages "
@@ -1807,18 +1681,15 @@ def compact_messages(messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     if len(keep_indices) > max_keep:
         sorted_indices = sorted(keep_indices)
         keep_indices   = set(sorted_indices[-max_keep:])
-        # Re-run fixed-point pairing after trimming
         _pair_tool_calls(regular_msgs, keep_indices)
 
     kept      = [regular_msgs[i] for i in sorted(keep_indices) if i < len(regular_msgs)]
     discarded = [m for i, m in enumerate(regular_msgs) if i not in keep_indices]
 
-    # ── Step 6: bail if trimming produced nothing to discard ─────────────────
     if not discarded:
         Log.warning("Compaction skipped: nothing to discard after ceiling enforcement.")
         return messages
 
-    # ── Step 7: rebuild ───────────────────────────────────────────────────────
     result = [system_msg]
     if task_state_msg:  result.append(task_state_msg)
     if last_plan_msg:   result.append(last_plan_msg)
@@ -1833,9 +1704,6 @@ def compact_messages(messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         f"[END COMPACTION SUMMARY]"
     )})
 
-    # FIX v9.3.5-sec: reconciliation checkpoint goes HERE — immediately after
-    # the compaction summary system message and BEFORE the kept regular messages.
-    # Placing it after assistant/tool turns caused most LLMs to ignore it.
     if task_state_msg:
         result.append({"role": "system", "content": (
             "[RECONCILIATION CHECKPOINT]\n\n"
@@ -2082,9 +1950,6 @@ class MCPClient:
         return resp.get("result", {})
 
     def health_check(self) -> bool:
-        # FIX v9.3.5-sec: self.healthy is written under self._lock in _read_loop
-        # and _force_kill but was previously read without the lock here.  Use
-        # the lock on the read side too to close the thread-safety gap.
         if not self.process or self.process.poll() is not None:
             with self._lock:
                 self.healthy = False
