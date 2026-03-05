@@ -620,12 +620,13 @@ def _sse_response(generator):
 # =============================================================================
 
 _TOOL_CATEGORIES = {
-    "Files":  ["read", "write", "edit", "glob", "grep", "ls", "mkdir"],
-    "Git":    ["git_status", "git_diff", "git_add", "git_commit", "git_branch"],
-    "System": ["shell", "powershell", "get_time"],
-    "Tasks":  ["todo_add", "todo_complete", "todo_update", "todo_list",
-               "plan_complete_step", "task"],
-    "State":  ["task_state_update", "task_state_get", "task_reconcile"],
+    "Files":      ["read", "write", "edit", "glob", "grep", "ls", "mkdir"],
+    "Git":        ["git_status", "git_diff", "git_add", "git_commit", "git_branch"],
+    "System":     ["shell", "powershell", "get_time"],
+    "Tasks":      ["todo_add", "todo_complete", "todo_update", "todo_list",
+                   "plan_complete_step", "task"],
+    "Delegation": ["delegate", "decompose", "report_result"],
+    "State":      ["task_state_update", "task_state_get", "task_reconcile"],
 }
 
 
