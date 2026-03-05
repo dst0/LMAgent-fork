@@ -6,7 +6,11 @@
 
 A locally-hosted AI agent that connects to any OpenAI-compatible LLM — LM Studio, Ollama, or a remote API — and autonomously completes real tasks: reading and writing files, running shell commands, managing git, tracking todos, and coordinating complex multi-step work through a hierarchical sub-agent system. Everything runs on your machine. No cloud. No subscriptions.
 
-
+<p align="center">
+  <a href="https://www.youtube.com/shorts/-_jKwfssAvA">
+    <img src="https://img.youtube.com/vi/-_jKwfssAvA/hqdefault.jpg" alt="Watch the demo">
+  </a>
+</p>
 ---
 
 ## Thank You
