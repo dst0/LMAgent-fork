@@ -168,14 +168,44 @@ Use sub-agents when:
   Example — multi-file project:
     decompose(manifest_json='{
       "tasks": [
-        {"task_id":"t1","objective":"Create styles.css with neon theme variables and component styles",
-         "deliverable":{"type":"file","path":"styles.css","format":"css"},"depends_on":[]},
-        {"task_id":"t2","objective":"Create index.html importing styles.css with full neon layout",
-         "deliverable":{"type":"file","path":"index.html","format":"html"},"depends_on":["t1"]},
-        {"task_id":"t3","objective":"Create app.js with interactive effects matching the neon theme",
-         "deliverable":{"type":"file","path":"app.js","format":"javascript"},"depends_on":["t1","t2"]}
+        {
+          "task_id":"t1",
+          "objective":"Create css/styles.css defining ALL CSS variables, class names, and IDs used by the project",
+          "deliverable":{"type":"file","path":"css/styles.css","format":"css"},
+          "constraints":["Define every CSS variable, class name, and element ID that index.html and app.js will reference"],
+          "depends_on":[]
+        },
+        {
+          "task_id":"t2",
+          "objective":"Create index.html — read css/styles.css first and use ONLY the class names and IDs defined there",
+          "deliverable":{"type":"file","path":"index.html","format":"html"},
+          "constraints":[
+            "Read css/styles.css first — use ONLY the classes and IDs already defined in it",
+            "Link stylesheet: <link rel=stylesheet href=css/styles.css>",
+            "Script tags at bottom of body pointing to app.js"
+          ],
+          "depends_on":["t1"]
+        },
+        {
+          "task_id":"t3",
+          "objective":"Create app.js — read index.html first and reference ONLY element IDs and classes that exist in it",
+          "deliverable":{"type":"file","path":"app.js","format":"javascript"},
+          "constraints":[
+            "Read index.html first — only use getElementById/querySelector with IDs that actually exist",
+            "No external dependencies",
+            "No assumptions about element IDs — read the file"
+          ],
+          "depends_on":["t1","t2"]
+        }
       ]
     }')
+
+  CRITICAL decompose rules:
+  - ALWAYS use depends_on to chain tasks — each agent receives prior files in its context.
+  - The FIRST task must define the shared interface (CSS vars, IDs, function names).
+  - Put exact class names / IDs / function signatures in constraints.
+  - A file that imports another file MUST depend on the task that creates it.
+  - NEVER leave depends_on empty unless the task is truly standalone (no shared elements).
 
 **Key principles:**
 - After delegate/decompose: the files exist. Don't re-write them. Just verify + TASK_COMPLETE.
