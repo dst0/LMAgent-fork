@@ -1,5 +1,5 @@
 """
-LMAgent Web — v6.9.2 
+LMAgent Web — v7
 Place this file next to agent_core.py, agent_tools.py, agent_main.py.
 """
 
@@ -27,14 +27,17 @@ try:
 except ImportError:
     _PIL_AVAILABLE = False
 
+# ── Core agent imports ────────────────────────────────────────────────────────
 try:
     import agent_core
-    import agent_tools
-    import agent_main as _agent_main_mod
+    import agent_tools as _at_mod
+    import agent_bca   as _bca_mod
+    import agent_main  as _agent_main_mod
     from agent_core import (
-        Config, Colors, colored, strip_thinking, MCPManager, PermissionMode,
-        PlanManager, Safety, SessionManager, StateManager, WaitState,
-        SoulConfig, TodoManager, Log,
+    Config, Colors, colored, strip_thinking,
+    MCPManager, PermissionMode,
+    PlanManager, Safety, SessionManager, StateManager, WaitState,
+    SoulConfig, TodoManager, Log, AgentResult,
     )
     from agent_tools import (
         TOOL_SCHEMAS, LLMClient, _REQUIRED_ARG_TOOLS,
@@ -42,7 +45,7 @@ try:
     )
     from agent_main import run_agent, _lock_workspace
 except ImportError as _ie:
-    sys.exit(f"ERROR: agent_core/tools/main not found.\nDetail: {_ie}")
+    sys.exit(f"ERROR: agent modules not found.\nDetail: {_ie}")
 except Exception:
     sys.exit(f"ERROR importing agent modules:\n{traceback.format_exc()}")
 
@@ -55,8 +58,7 @@ WORKSPACE = _lock_workspace(Config.WORKSPACE)
 soul      = SoulConfig.load(WORKSPACE)
 Log.set_silent(True)
 
-_UPLOAD_EXTS = frozenset({".jpg", ".jpeg", ".png", ".gif", ".webp"})
-
+# ── MIME types ────────────────────────────────────────────────────────────────
 _mimetypes.add_type("text/javascript",           ".js")
 _mimetypes.add_type("text/javascript",           ".mjs")
 _mimetypes.add_type("application/json",          ".json")
@@ -64,24 +66,21 @@ _mimetypes.add_type("text/css",                  ".css")
 _mimetypes.add_type("image/svg+xml",             ".svg")
 _mimetypes.add_type("application/manifest+json", ".webmanifest")
 
+_UPLOAD_EXTS = frozenset({".jpg", ".jpeg", ".png", ".gif", ".webp"})
+
+# ── Global MCP (used by tools panel) ─────────────────────────────────────────
 _global_mcp = MCPManager(WORKSPACE)
 try:
     _global_mcp.load_servers()
 except Exception:
     pass
 
-app = Flask(__name__)
 
-def _make_qr_data_uri(url):
-    try:
-        import qrcode, qrcode.image.svg, base64, io
-        buf = io.BytesIO()
-        qrcode.make(url, image_factory=qrcode.image.svg.SvgPathImage,
-                    box_size=4, border=2).save(buf)
-        b64 = base64.b64encode(buf.getvalue()).decode()
-        return f"data:image/svg+xml;base64,{b64}"
-    except ImportError:
-        return "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg'/>"
+# =============================================================================
+# FLASK APP
+# =============================================================================
+
+app = Flask(__name__)
 
 
 @app.after_request
@@ -106,18 +105,20 @@ def _security_headers(response):
 # SECURITY
 # =============================================================================
 
-_AGENT_TOKEN = os.environ.get("AGENT_TOKEN") or str(secrets.randbelow(900000) + 100000)
+_AGENT_TOKEN = os.environ.get("AGENT_TOKEN") or str(secrets.randbelow(900_000) + 100_000)
+print(f"[LMAgent] PIN: {_AGENT_TOKEN}", flush=True)
+
 _HOST        = os.environ.get("AGENT_HOST", "0.0.0.0")
 _SSL_CERT    = os.environ.get("AGENT_CERT", "")
 _SSL_KEY     = os.environ.get("AGENT_KEY",  "")
 
 _rate_data: dict = {}
-_rate_lock   = threading.Lock()
-_RATE_LIMIT  = 120
-_RATE_WINDOW = 60.0
+_rate_lock       = threading.Lock()
+_RATE_LIMIT      = 120
+_RATE_WINDOW     = 60.0
 
 
-def _is_rate_limited(ip):
+def _is_rate_limited(ip: str) -> bool:
     now = time.time()
     with _rate_lock:
         ts = [t for t in _rate_data.get(ip, []) if now - t < _RATE_WINDOW]
@@ -137,7 +138,8 @@ def _require_auth(f):
     @functools.wraps(f)
     def wrapper(*args, **kwargs):
         if _AGENT_TOKEN:
-            token = request.headers.get("X-Token", "") or request.args.get("token", "")
+            token = (request.headers.get("X-Token", "")
+                     or request.args.get("token", ""))
             if not token or not secrets.compare_digest(token, _AGENT_TOKEN):
                 return jsonify({"error": "unauthorized"}), 401
         if _is_rate_limited(request.remote_addr or "unknown"):
@@ -148,9 +150,20 @@ def _require_auth(f):
 
 # =============================================================================
 # SIGN-IN PAGE
-# QR code encodes the base URL only (no token) — user must type the PIN.
-# Uses a free QR image API so no JS QR library is needed.
+# QR encodes the base URL only — user must type the PIN.
 # =============================================================================
+
+def _make_qr_data_uri(url: str) -> str:
+    try:
+        import qrcode, qrcode.image.svg, base64
+        buf = io.BytesIO()
+        qrcode.make(url, image_factory=qrcode.image.svg.SvgPathImage,
+                    box_size=4, border=2).save(buf)
+        b64 = base64.b64encode(buf.getvalue()).decode()
+        return f"data:image/svg+xml;base64,{b64}"
+    except ImportError:
+        return "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg'/>"
+
 
 _UNAUTH_HTML = """\
 <!DOCTYPE html>
@@ -208,7 +221,7 @@ code{background:#0d0d0f;border:1px solid #252530;padding:1px 6px;border-radius:3
 <script>
 (function(){
   var digits=Array.from(document.querySelectorAll('.pin-digit'));
-  var btn=document.getElementById('go-btn'), err=document.getElementById('err');
+  var btn=document.getElementById('go-btn');
   function val(){ return digits.map(function(d){return d.value;}).join(''); }
   function upd(){ btn.disabled=val().length!==6; digits.forEach(function(d){d.classList.toggle('filled',d.value!=='');}); }
   digits.forEach(function(d,i){
@@ -231,7 +244,7 @@ code{background:#0d0d0f;border:1px solid #252530;padding:1px 6px;border-radius:3
   digits[0].focus();
   window.submitPin=function(){
     var p=val(); if(p.length!==6)return;
-    btn.disabled=true; err.textContent='';
+    btn.disabled=true;
     window.location.href=window.location.origin+window.location.pathname+'?token='+encodeURIComponent(p);
   };
 })();
@@ -241,12 +254,12 @@ code{background:#0d0d0f;border:1px solid #252530;padding:1px 6px;border-radius:3
 
 
 # =============================================================================
-# GLOBALS
+# GLOBAL STATE
 # =============================================================================
 
 _AGENT_LOCK         = threading.Lock()
 _AGENT_LOCK_TIMEOUT = 60
-_tl                 = threading.local()
+_tl                 = threading.local()   # per-thread callbacks & request state
 
 _active_responses:      dict          = {}
 _active_responses_lock: threading.Lock = threading.Lock()
@@ -264,27 +277,269 @@ _whisper_lock        = threading.Lock()
 _agent_state      = "idle"
 _agent_state_lock = threading.Lock()
 
+_PERM_MODE_MAP = {m.value: m for m in PermissionMode}
 
-def _set_agent_state(s):
+
+def _set_agent_state(s: str) -> None:
     global _agent_state
     with _agent_state_lock:
         _agent_state = s
 
 
-def _get_agent_state():
+def _get_agent_state() -> str:
     with _agent_state_lock:
         return _agent_state
 
 
-_PERM_MODE_MAP = {m.value: m for m in PermissionMode}
-
-
-def _resolve_permission_mode():
-    return _PERM_MODE_MAP.get((_current_permission_mode or "").lower(), PermissionMode.AUTO)
+def _resolve_permission_mode() -> PermissionMode:
+    return _PERM_MODE_MAP.get(
+        (_current_permission_mode or "").lower(), PermissionMode.AUTO
+    )
 
 
 # =============================================================================
-# MONKEY-PATCH LLMClient._parse_stream
+# SSE BROADCAST / STREAM QUEUES
+# =============================================================================
+
+_stream_queues:      list          = []
+_stream_queues_lock: threading.Lock = threading.Lock()
+
+
+def _broadcast(item: tuple) -> None:
+    """Push an event to all connected SSE clients and the persistent chat log."""
+    kind, payload = item
+    if isinstance(payload, str):
+        try:
+            payload = payload.encode("latin-1").decode("utf-8")
+        except (UnicodeDecodeError, UnicodeEncodeError):
+            pass
+        item = (kind, payload)
+    _chatlog_append(item)
+    with _stream_queues_lock:
+        queues = list(_stream_queues)
+    for q in queues:
+        try:
+            q.put_nowait(item)
+        except Exception:
+            pass
+
+
+def _register_stream_q() -> queue.Queue:
+    q = queue.Queue()
+    with _stream_queues_lock:
+        _stream_queues.append(q)
+    return q
+
+
+def _unregister_stream_q(q: queue.Queue) -> None:
+    with _stream_queues_lock:
+        try:
+            _stream_queues.remove(q)
+        except ValueError:
+            pass
+
+
+# =============================================================================
+# PERSISTENT CHAT LOG  (per-session replay on reconnect)
+# =============================================================================
+
+_chat_logs:     dict          = defaultdict(list)
+_chat_log_lock: threading.Lock = threading.Lock()
+_NO_SESSION_KEY = "_none_"
+_REPLAY_KINDS   = frozenset({
+    "token", "thinking", "tool", "status",
+    "iteration", "done", "error", "session",
+})
+
+
+def _clog_key(sid) -> str:
+    return sid if sid else _NO_SESSION_KEY
+
+
+def _chatlog_append(item: tuple) -> None:
+    if item[0] not in _REPLAY_KINDS:
+        return
+    key = _clog_key(_current_session_id)
+    with _chat_log_lock:
+        _chat_logs[key].append(item)
+
+
+def _chatlog_get(sid) -> list:
+    with _chat_log_lock:
+        return list(_chat_logs.get(_clog_key(sid), []))
+
+
+def _chatlog_clear(sid) -> None:
+    with _chat_log_lock:
+        _chat_logs.pop(_clog_key(sid), None)
+
+
+def _chatlog_merge_keys(old_sid, new_sid) -> None:
+    ok, nk = _clog_key(old_sid), _clog_key(new_sid)
+    if ok == nk:
+        return
+    with _chat_log_lock:
+        if ok in _chat_logs:
+            _chat_logs[nk] = _chat_logs.pop(ok, []) + _chat_logs.get(nk, [])
+
+
+# =============================================================================
+# BCA WEB HOOKS
+# ─────────────────────────────────────────────────────────────────────────────
+# Wrap three BCA internals to broadcast sub-agent progress to SSE clients.
+# No logic changes — pure event emission layered on top of the originals.
+#
+# Execution order on one thread:
+#   run_agent → _process_tool_calls → tool_decompose / tool_delegate
+#             → _run_bca_agent (per sub-agent)
+#             → _dispatch_bca_tool (per tool call inside sub-agent)
+#
+# Because BCA runs synchronously on the same thread as the web handler,
+# _tl.token_cb is live throughout. We suppress sub-agent token streaming
+# (saves/restores _tl.token_cb) so root-agent message blocks stay clean,
+# while still surfacing per-tool progress via tool events.
+# =============================================================================
+
+_orig_run_bca_agent     = _bca_mod._run_bca_agent
+_orig_dispatch_bca_tool = _bca_mod._dispatch_bca_tool
+_orig_tool_decompose    = _bca_mod.tool_decompose
+_orig_tool_delegate     = _bca_mod.tool_delegate
+
+# Tools whose intermediate results are too noisy for the UI
+_BCA_SILENT_TOOLS = frozenset({
+    "task_state_update", "task_state_get", "task_reconcile",
+    "todo_list",
+})
+
+
+def _web_run_bca_agent(brief, workspace, bm, parent_ctx,
+                       stream_callback=None, max_iterations=None):
+    """Broadcast sub-agent lifecycle events, suppress token noise."""
+    depth  = getattr(brief, "depth", 0)
+    indent = "  " * max(0, depth - 1)
+    short  = brief.agent_id[:8]
+    obj    = brief.objective[:60]
+
+    _broadcast(("status", f"{indent}▶ [{short}] {obj}…"))
+
+    # Suppress sub-agent tokens so they don't pollute the root agent's
+    # streaming message block.  The parent's token_cb is restored in finally.
+    prev_token_cb = getattr(_tl, "token_cb", None)
+    _tl.token_cb  = None
+
+    try:
+        result = _orig_run_bca_agent(
+            brief, workspace, bm, parent_ctx,
+            stream_callback=None,
+            max_iterations=max_iterations,
+        )
+    finally:
+        _tl.token_cb = prev_token_cb
+
+    status  = result.get("status", "error")
+    icon    = {"ok": "✓", "partial": "◑"}.get(status, "✗")
+    summary = (result.get("summary") or "")[:60]
+    arts    = result.get("artifacts") or []
+    line    = f"{indent}{icon} [{short}] {summary}"
+    if arts:
+        line += f" → {', '.join(arts[:3])}"
+    _broadcast(("status", line))
+
+    return result
+
+
+def _web_dispatch_bca_tool(fn_name, args, workspace, brief=None):
+    """Broadcast each sub-agent tool call as a tool event in the UI."""
+    if fn_name not in _BCA_SILENT_TOOLS:
+        # Build a compact args preview using the most useful key
+        preview = ""
+        for key in ("path", "command", "pattern", "step_id", "description"):
+            v = args.get(key, "")
+            if v:
+                preview = str(v)[:50]
+                break
+        _broadcast(("tool", f"{fn_name}({preview})"))
+
+    result = _orig_dispatch_bca_tool(fn_name, args, workspace, brief=brief)
+
+    if fn_name not in _BCA_SILENT_TOOLS:
+        ok = result.get("success", False)
+        _broadcast(("tool", f"{'✓' if ok else '✗'} {fn_name}"))
+
+    return result
+
+
+def _web_tool_decompose(workspace, manifest_json):
+    """Show decompose task count before starting, then final outcome."""
+    try:
+        if isinstance(manifest_json, dict):
+            n = len(manifest_json.get("tasks", []))
+        elif isinstance(manifest_json, list):
+            n = len(manifest_json)
+        else:
+            raw = str(manifest_json).strip()
+            if raw.startswith("```"):
+                lines = raw.splitlines()
+                raw   = "\n".join(lines[1:])
+                if raw.rstrip().endswith("```"):
+                    raw = raw.rstrip()[:-3].rstrip()
+            raw = re.sub(r",\s*([}\]])", r"\1", raw)
+            n   = len(json.loads(raw).get("tasks", []))
+        _broadcast(("status", f"decomposing into {n} sub-task(s)…"))
+    except Exception:
+        _broadcast(("status", "decomposing task…"))
+
+    result = _orig_tool_decompose(workspace, manifest_json)
+
+    ok  = result.get("tasks_ok",  0)
+    ran = result.get("tasks_run", 0)
+    if result.get("success"):
+        _broadcast(("status", f"✓ decompose: all {ok} task(s) succeeded"))
+    elif ok > 0:
+        _broadcast(("status", f"◑ decompose: {ok}/{ran} task(s) succeeded"))
+    else:
+        _broadcast(("status", f"✗ decompose failed: {result.get('error','')[:80]}"))
+
+    return result
+
+
+def _web_tool_delegate(workspace, **kwargs):
+    """Show delegate objective before and result after."""
+    obj = kwargs.get("objective", "")[:60]
+    _broadcast(("status", f"delegate → {obj}…"))
+
+    result = _orig_tool_delegate(workspace, **kwargs)
+
+    ok      = result.get("success", False)
+    summary = (result.get("summary") or "")[:60]
+    arts    = result.get("artifacts") or []
+    line    = f"{'✓' if ok else '✗'} delegate: {summary}"
+    if arts:
+        line += f" → {', '.join(arts[:3])}"
+    _broadcast(("status", line))
+
+    return result
+
+
+# Apply patches
+_bca_mod._run_bca_agent     = _web_run_bca_agent
+_bca_mod._dispatch_bca_tool = _web_dispatch_bca_tool
+_bca_mod.tool_decompose      = _web_tool_decompose
+_bca_mod.tool_delegate       = _web_tool_delegate
+
+# Keep TOOL_HANDLERS in sync so agent_tools dispatch uses the patched versions
+_at_mod.TOOL_HANDLERS["decompose"] = _web_tool_decompose
+_at_mod.TOOL_HANDLERS["delegate"]  = _web_tool_delegate
+
+
+# =============================================================================
+# LLMClient STREAM PARSER PATCH
+# ─────────────────────────────────────────────────────────────────────────────
+# Replaces the default blocking _parse_stream with one that:
+#   • Routes tokens to _tl.token_cb (broadcasts to all SSE clients)
+#   • Routes thinking tokens to _tl.thinking_cb
+#   • Respects _tl.stop_event for mid-stream cancellation
+#   • Registers the raw response so /stop can close it immediately
 # =============================================================================
 
 def _web_parse_stream(resp, stream_callback):
@@ -295,84 +550,98 @@ def _web_parse_stream(resp, stream_callback):
     in_think      = False
 
     resp.encoding = "utf-8"
-    _req_id = getattr(_tl, "request_id", None)
-    if _req_id:
+    req_id = getattr(_tl, "request_id", None)
+    if req_id:
         with _active_responses_lock:
-            _active_responses[_req_id] = resp
+            _active_responses[req_id] = resp
     _tl.current_resp = resp
 
     stop_event = getattr(_tl, "stop_event", None)
 
-    for line in resp.iter_lines(decode_unicode=True):
-        if stop_event and stop_event.is_set():
-            try: resp.close()
-            except Exception: pass
-            break
-        if not line or not line.startswith("data: "):
-            continue
-        data_str = line[6:].strip()
-        if data_str == "[DONE]":
-            break
-        try:
-            chunk = json.loads(data_str)
-        except json.JSONDecodeError:
-            continue
+    try:
+        for line in resp.iter_lines(decode_unicode=True):
+            if stop_event and stop_event.is_set():
+                try:
+                    resp.close()
+                except Exception:
+                    pass
+                break
 
-        choices = chunk.get("choices", [])
-        if not choices:
-            continue
-        choice = choices[0]
-        delta  = choice.get("delta", {})
+            if not line or not line.startswith("data: "):
+                continue
+            data_str = line[6:].strip()
+            if data_str == "[DONE]":
+                break
+            try:
+                chunk = json.loads(data_str)
+            except json.JSONDecodeError:
+                continue
 
-        if choice.get("finish_reason"):
-            finish_reason = choice["finish_reason"]
+            choices = chunk.get("choices", [])
+            if not choices:
+                continue
+            choice = choices[0]
+            delta  = choice.get("delta", {})
 
-        raw_content = delta.get("content")
-        if raw_content:
-            content += raw_content
-            _eff_cb     = stream_callback or getattr(_tl, "token_cb", None)
-            thinking_cb = getattr(_tl, "thinking_cb", None)
-            if _eff_cb or thinking_cb:
-                for part in re.split(r"(</?think>)", raw_content, flags=re.IGNORECASE):
-                    if not part:
-                        continue
-                    if part.lower() == "<think>":
-                        in_think = True
-                    elif part.lower() == "</think>":
-                        in_think = False
-                        if thinking_cb:
-                            thinking_cb(None)
-                    elif in_think:
-                        sys.stdout.write(colored(part, Colors.GRAY))
-                        sys.stdout.flush()
-                        if thinking_cb:
-                            thinking_cb(part)
-                    elif _eff_cb:
-                        _eff_cb(part)
+            if choice.get("finish_reason"):
+                finish_reason = choice["finish_reason"]
 
-        thinking_blocks = delta.get("thinking")
-        if isinstance(thinking_blocks, list):
-            thinking_cb = getattr(_tl, "thinking_cb", None)
-            for tb in thinking_blocks:
+            raw_content = delta.get("content")
+            if raw_content:
+                content    += raw_content
+                eff_cb      = stream_callback or getattr(_tl, "token_cb", None)
+                thinking_cb = getattr(_tl, "thinking_cb", None)
+
+                if eff_cb or thinking_cb:
+                    for part in re.split(r"(</?think>)", raw_content, flags=re.IGNORECASE):
+                        if not part:
+                            continue
+                        if part.lower() == "<think>":
+                            in_think = True
+                        elif part.lower() == "</think>":
+                            in_think = False
+                            if thinking_cb:
+                                thinking_cb(None)
+                        elif in_think:
+                            sys.stdout.write(colored(part, Colors.GRAY))
+                            sys.stdout.flush()
+                            if thinking_cb:
+                                thinking_cb(part)
+                        elif eff_cb:
+                            eff_cb(part)
+
+            # Native thinking blocks (e.g. Claude API)
+            for tb in (delta.get("thinking") or []):
                 tb_text = tb.get("thinking") if isinstance(tb, dict) else None
                 if tb_text:
+                    thinking_cb = getattr(_tl, "thinking_cb", None)
                     sys.stdout.write(colored(tb_text, Colors.GRAY))
                     sys.stdout.flush()
                     if thinking_cb:
                         thinking_cb(tb_text)
                         thinking_cb(None)
 
-        for tc in delta.get("tool_calls") or []:
-            idx = tc.get("index", next_idx)
-            if idx not in tool_calls:
-                tool_calls[idx] = {"id": tc.get("id", f"tc_{idx}"), "type": "function",
-                                   "function": {"name": None, "arguments": ""}}
-                next_idx += 1
-            fn = tc.get("function") or {}
-            if fn.get("name"):
-                tool_calls[idx]["function"]["name"] = fn["name"]
-            if isinstance(fn.get("arguments"), str):
-                tool_calls[idx]["function"]["arguments"] += fn["arguments"]
+            for tc in delta.get("tool_calls") or []:
+                idx = tc.get("index", next_idx)
+                if idx not in tool_calls:
+                    tool_calls[idx] = {
+                        "id":       tc.get("id", f"tc_{idx}"),
+                        "type":     "function",
+                        "function": {"name": None, "arguments": ""},
+                    }
+                    next_idx += 1
+                fn = tc.get("function") or {}
+                if fn.get("name"):
+                    tool_calls[idx]["function"]["name"] = fn["name"]
+                if isinstance(fn.get("arguments"), str):
+                    tool_calls[idx]["function"]["arguments"] += fn["arguments"]
+
+    except (AttributeError, ConnectionError, OSError) as _stream_err:
+        Log.warning(
+            f"[web] Stream interrupted mid-response "
+            f"({type(_stream_err).__name__}: {_stream_err}) — returning partial result"
+        )
+        _broadcast(("status", f"⚠ stream interrupted — partial response returned"))
 
     if content and stream_callback:
         stream_callback("\n")
@@ -385,19 +654,21 @@ def _web_parse_stream(resp, stream_callback):
             Log.warning(f"Tool call {i} missing name — skipping")
             incomplete = True
             continue
+
         args_str = tc["function"]["arguments"]
-        Log.info(f"[PARSE] '{fn_name}' args length={len(args_str)} first100={repr(args_str[:100])}")
         is_empty = not args_str or not args_str.strip()
+
         if is_empty or args_str.strip() == "{}":
             if fn_name in _REQUIRED_ARG_TOOLS:
-                Log.error(f"'{fn_name}' received empty/bare args — finish_reason={finish_reason!r}")
-                incomplete = True
+                Log.error(f"'{fn_name}' received empty args — finish_reason={finish_reason!r}")
+                incomplete           = True
                 tc["function"]["arguments"] = "{}"
-                tc["_truncated"] = True
+                tc["_truncated"]     = True
             else:
                 tc["function"]["arguments"] = "{}"
             calls.append(tc)
             continue
+
         try:
             json.loads(args_str)
             calls.append(tc)
@@ -417,131 +688,61 @@ def _web_parse_stream(resp, stream_callback):
                     except json.JSONDecodeError:
                         pass
             if not repaired:
-                incomplete = True
-                tc["function"]["arguments"] = "{}"
-                tc["_truncated"] = True
+                incomplete                   = True
+                tc["function"]["arguments"]  = "{}"
+                tc["_truncated"]             = True
                 calls.append(tc)
 
     if finish_reason == "length":
-        Log.warning("\u26a0\ufe0f  Generation stopped: output token limit hit")
+        Log.warning("⚠️  Generation stopped: output token limit hit")
         incomplete = True
     elif finish_reason == "stop" and incomplete:
-        Log.warning("\u26a0\ufe0f  finish_reason=stop but tool calls were incomplete")
+        Log.warning("⚠️  finish_reason=stop but tool calls were incomplete")
     elif finish_reason is None and incomplete:
-        Log.warning("\u26a0\ufe0f  finish_reason=None — stream may have ended prematurely")
+        Log.warning("⚠️  finish_reason=None — stream may have ended prematurely")
 
     clean_content, _ = strip_thinking(content)
-    return {"content": clean_content, "tool_calls": calls or None,
-            "incomplete": incomplete, "finish_reason": finish_reason}
+    return {
+        "content":       clean_content,
+        "tool_calls":    calls or None,
+        "incomplete":    incomplete,
+        "finish_reason": finish_reason,
+    }
 
 
 LLMClient._parse_stream = staticmethod(_web_parse_stream)
 
-
 # =============================================================================
-# BROADCAST / STREAM QUEUES
-# =============================================================================
-
-_stream_queues      = []
-_stream_queues_lock = threading.Lock()
-
-
-def _broadcast(item):
-    kind, payload = item
-    if isinstance(payload, str):
-        try:
-            payload = payload.encode("latin-1").decode("utf-8")
-        except (UnicodeDecodeError, UnicodeEncodeError):
-            pass
-        item = (kind, payload)
-    _chatlog_append(item)
-    with _stream_queues_lock:
-        queues = list(_stream_queues)
-    for q in queues:
-        try: q.put_nowait(item)
-        except Exception: pass
-
-
-def _register_stream_q():
-    q = queue.Queue()
-    with _stream_queues_lock:
-        _stream_queues.append(q)
-    return q
-
-
-def _unregister_stream_q(q):
-    with _stream_queues_lock:
-        try: _stream_queues.remove(q)
-        except ValueError: pass
-
-
-# =============================================================================
-# PERSISTENT CHAT LOG
-# =============================================================================
-
-_chat_logs     = defaultdict(list)
-_chat_log_lock = threading.Lock()
-_NO_SESSION_KEY = "_none_"
-_REPLAY_KINDS   = frozenset({"token", "thinking", "tool", "status",
-                              "iteration", "done", "error", "session"})
-
-
-def _clog_key(sid):
-    return sid if sid else _NO_SESSION_KEY
-
-
-def _chatlog_append(item):
-    if item[0] not in _REPLAY_KINDS:
-        return
-    key = _clog_key(_current_session_id)
-    with _chat_log_lock:
-        _chat_logs[key].append(item)
-
-
-def _chatlog_get(sid):
-    with _chat_log_lock:
-        return list(_chat_logs.get(_clog_key(sid), []))
-
-
-def _chatlog_clear(sid):
-    with _chat_log_lock:
-        _chat_logs.pop(_clog_key(sid), None)
-
-
-def _chatlog_merge_keys(old_sid, new_sid):
-    ok, nk = _clog_key(old_sid), _clog_key(new_sid)
-    if ok == nk:
-        return
-    with _chat_log_lock:
-        if ok in _chat_logs:
-            _chat_logs[nk] = _chat_logs.pop(ok, []) + _chat_logs.get(nk, [])
-
-
-# =============================================================================
-# STOP EXCEPTION
-# =============================================================================
-
-class _AgentStopped(BaseException):
-    pass
-
-
-# =============================================================================
-# _HeaderStreamCb PATCH
+# STREAMING HEADER CALLBACK PATCH
+# ─────────────────────────────────────────────────────────────────────────────
+# Extends _OrigHSC to also route tokens through _tl.token_cb so that
+# non-stream-callback paths (mode="output") still reach the browser.
 # =============================================================================
 
 class _PatchedHSC(_OrigHSC):
-    def __call__(self, token):
+    def __call__(self, token: str) -> None:
         super().__call__(token)
         if token:
             cb = getattr(_tl, "token_cb", None)
             if cb:
-                try: cb(token)
-                except _AgentStopped: raise
-                except Exception: pass
+                try:
+                    cb(token)
+                except _AgentStopped:
+                    raise
+                except Exception:
+                    pass
 
 
-agent_tools._HeaderStreamCb     = _PatchedHSC
 _agent_main_mod._HeaderStreamCb = _PatchedHSC
+_at_mod._HeaderStreamCb         = _PatchedHSC
+
+
+# =============================================================================
+# STOP SIGNAL
+# =============================================================================
+
+class _AgentStopped(BaseException):
+    """Raised inside token_cb to abort a running agent mid-stream."""
 
 
 # =============================================================================
@@ -551,13 +752,13 @@ _agent_main_mod._HeaderStreamCb = _PatchedHSC
 def _make_thinking_helpers():
     buf = [""]
 
-    def flush_thinking():
+    def flush_thinking() -> None:
         text = buf[0].strip()
         if text:
             _broadcast(("thinking", text))
         buf[0] = ""
 
-    def thinking_cb(part):
+    def thinking_cb(part) -> None:
         if part is None:
             flush_thinking()
         else:
@@ -567,7 +768,7 @@ def _make_thinking_helpers():
 
 
 # =============================================================================
-# EVENT NOISE FILTER + PUSH
+# EVENT NOISE FILTER
 # =============================================================================
 
 _STATUS_NOISE = frozenset({
@@ -578,107 +779,74 @@ _STATUS_NOISE = frozenset({
 })
 
 
-def _is_noisy(msg):
+def _is_noisy(msg: str) -> bool:
     ml = msg.lower()
     return any(ml.startswith(kw) or kw in ml[:40] for kw in _STATUS_NOISE)
 
 
-def _push_event(event, stop_event, last_status, flush_thinking=None):
+def _push_event(event, stop_event, last_status: list, flush_thinking=None) -> None:
     if stop_event and stop_event.is_set():
         return
     etype, edata = event.type, event.data
+
     if etype == "tool_call":
-        if flush_thinking: flush_thinking()
-        _broadcast(("tool", f"{edata.get('name','?')}({edata.get('args_preview','')[:50]})"))
+        if flush_thinking:
+            flush_thinking()
+        _broadcast(("tool",
+                     f"{edata.get('name','?')}({edata.get('args_preview','')[:50]})"))
+
     elif etype == "tool_result":
-        _broadcast(("tool", f"{'✓' if edata.get('success') else '✗'} {edata.get('name','')}"))
+        _broadcast(("tool",
+                     f"{'✓' if edata.get('success') else '✗'} {edata.get('name','')}"))
+
     elif etype == "iteration":
-        if flush_thinking: flush_thinking()
+        if flush_thinking:
+            flush_thinking()
         _broadcast(("iteration", f"{edata.get('n')}/{edata.get('max')}"))
+
     elif etype in ("log", "warning", "error"):
         msg = edata.get("message") or edata.get("error") or ""
         if msg and (etype == "error" or (not _is_noisy(msg) and msg != last_status[0])):
             last_status[0] = msg
-            _broadcast(("status", msg[:100]))
+            _broadcast(("status", msg[:120]))
+
     elif etype == "waiting":
         _broadcast(("status", f"waiting until {edata.get('resume_after')}"))
+
     elif etype == "complete":
         _broadcast(("status", f"done — {edata.get('reason', '')}"))
 
 
 def _sse_response(generator):
     return Response(generator, mimetype="text/event-stream", headers={
-        "Cache-Control": "no-cache, no-transform",
+        "Cache-Control":    "no-cache, no-transform",
         "X-Accel-Buffering": "no",
-        "Connection": "keep-alive",
-        "Content-Type": "text/event-stream; charset=utf-8",
+        "Connection":       "keep-alive",
+        "Content-Type":     "text/event-stream; charset=utf-8",
     })
 
 
 # =============================================================================
-# TOOL CATEGORIES
-# =============================================================================
-
-_TOOL_CATEGORIES = {
-    "Files":      ["read", "write", "edit", "glob", "grep", "ls", "mkdir"],
-    "Git":        ["git_status", "git_diff", "git_add", "git_commit", "git_branch"],
-    "System":     ["shell", "powershell", "get_time"],
-    "Tasks":      ["todo_add", "todo_complete", "todo_update", "todo_list",
-                   "plan_complete_step", "task"],
-    "Delegation": ["delegate", "decompose", "report_result"],
-    "State":      ["task_state_update", "task_state_get", "task_reconcile"],
-}
-
-
-def _build_tools_payload():
-    schema_map = {s["function"]["name"]: s["function"] for s in TOOL_SCHEMAS}
-    builtin = {}
-    for cat, names in _TOOL_CATEGORIES.items():
-        tools = []
-        for name in names:
-            fn = schema_map.get(name)
-            if fn:
-                tools.append({
-                    "name": name,
-                    "description": fn.get("description", ""),
-                    "params": list(fn.get("parameters", {}).get("properties", {}).keys()),
-                    "required": fn.get("parameters", {}).get("required", []),
-                })
-        if tools:
-            builtin[cat] = tools
-
-    mcp_groups = {}
-    for client in _global_mcp.clients:
-        if not client.health_check():
-            continue
-        tools = [{"name": t.get("name", ""), "description": t.get("description", ""),
-                  "params": list(t.get("inputSchema", {}).get("properties", {}).keys()),
-                  "required": t.get("inputSchema", {}).get("required", [])}
-                 for t in client.tools]
-        if tools:
-            mcp_groups[f"MCP · {client.name}"] = tools
-
-    return {"builtin": builtin, "mcp": mcp_groups}
-
-
-# =============================================================================
 # SHARED AGENT EXECUTION
-# Handles the inner loop for both /chat and the web scheduler.
-# Caller must hold _AGENT_LOCK before calling and release it after.
+# ─────────────────────────────────────────────────────────────────────────────
+# Called by /chat and the web scheduler.  Caller MUST hold _AGENT_LOCK.
 # =============================================================================
 
-def _execute_agent(message, session_id, request_id, stop_ev, permission_mode, whisper_fn=None):
+def _execute_agent(message, session_id, request_id, stop_ev,
+                   permission_mode, whisper_fn=None):
     global _current_session_id
 
     _tl.stop_event  = stop_ev
     _tl.request_id  = request_id
+
     thinking_cb, flush_thinking = _make_thinking_helpers()
     _tl.thinking_cb = thinking_cb
 
-    def token_cb(tok):
+    def token_cb(tok: str) -> None:
         if stop_ev.is_set():
             raise _AgentStopped()
         _broadcast(("token", tok))
+
     _tl.token_cb = token_cb
 
     _broadcast(("session", session_id or ""))
@@ -689,6 +857,10 @@ def _execute_agent(message, session_id, request_id, stop_ev, permission_mode, wh
         if not stop_ev.is_set():
             _push_event(event, stop_ev, last_status, flush_thinking)
 
+    def whisper_fn_safe():
+        with _whisper_lock:
+            return _whisper_store.pop(0) if _whisper_store else None
+
     try:
         result = run_agent(
             message, WORKSPACE,
@@ -698,7 +870,7 @@ def _execute_agent(message, session_id, request_id, stop_ev, permission_mode, wh
             mode="output",
             event_callback=ev_cb,
             soul=soul,
-            whisper_fn=whisper_fn,
+            whisper_fn=whisper_fn or whisper_fn_safe,
         )
         flush_thinking()
 
@@ -714,8 +886,8 @@ def _execute_agent(message, session_id, request_id, stop_ev, permission_mode, wh
             _broadcast(("error", result.final_answer or result.status))
             _set_agent_state("idle")
         else:
-            words = (result.final_answer or "").split()
-            reason = " ".join(words[:8]) + ("\u2026" if len(words) > 8 else "")
+            words  = (result.final_answer or "").split()
+            reason = " ".join(words[:8]) + ("…" if len(words) > 8 else "")
             _broadcast(("done", reason or result.status))
             _set_agent_state("idle")
 
@@ -723,16 +895,72 @@ def _execute_agent(message, session_id, request_id, stop_ev, permission_mode, wh
         flush_thinking()
         _broadcast(("done", "stopped"))
         _set_agent_state("idle")
+
     except Exception as e:
         flush_thinking()
         _broadcast(("error", str(e)))
         _set_agent_state("idle")
         Log.error(f"[agent] unhandled exception: {e}")
         traceback.print_exc()
+
     finally:
-        _tl.stop_event = _tl.request_id = _tl.thinking_cb = _tl.token_cb = None
+        _tl.stop_event  = None
+        _tl.request_id  = None
+        _tl.thinking_cb = None
+        _tl.token_cb    = None
         with _active_responses_lock:
             _active_responses.pop(request_id, None)
+
+
+# =============================================================================
+# TOOL CATEGORIES  (for /tools panel)
+# =============================================================================
+
+_TOOL_CATEGORIES = {
+    "Files":      ["read", "write", "edit", "glob", "grep", "ls", "mkdir"],
+    "Git":        ["git_status", "git_diff", "git_add", "git_commit", "git_branch"],
+    "System":     ["shell", "get_time"],
+    "Tasks":      ["todo_add", "todo_complete", "todo_update", "todo_list",
+                   "plan_complete_step", "task"],
+    "Delegation": ["delegate", "decompose", "report_result"],
+    "State":      ["task_state_update", "task_state_get", "task_reconcile"],
+}
+
+
+def _build_tools_payload() -> dict:
+    schema_map = {s["function"]["name"]: s["function"] for s in TOOL_SCHEMAS}
+    builtin    = {}
+    for cat, names in _TOOL_CATEGORIES.items():
+        tools = []
+        for name in names:
+            fn = schema_map.get(name)
+            if fn:
+                tools.append({
+                    "name":        name,
+                    "description": fn.get("description", ""),
+                    "params":      list(fn.get("parameters", {}).get("properties", {}).keys()),
+                    "required":    fn.get("parameters", {}).get("required", []),
+                })
+        if tools:
+            builtin[cat] = tools
+
+    mcp_groups = {}
+    for client in _global_mcp.clients:
+        if not client.health_check():
+            continue
+        tools = [
+            {
+                "name":        t.get("name", ""),
+                "description": t.get("description", ""),
+                "params":      list(t.get("inputSchema", {}).get("properties", {}).keys()),
+                "required":    t.get("inputSchema", {}).get("required", []),
+            }
+            for t in client.tools
+        ]
+        if tools:
+            mcp_groups[f"MCP · {client.name}"] = tools
+
+    return {"builtin": builtin, "mcp": mcp_groups}
 
 
 # =============================================================================
@@ -1169,7 +1397,6 @@ header {
 .ft-search:focus { border-color: var(--amber); }
 .ft-search::placeholder { color: var(--text3); }
 #ft-tree { flex: 1; overflow-y: auto; padding: 2px 0 6px; font-size: 12px; font-family: var(--mono); }
-#ft-tree::-webkit-scrollbar { width: 3px; }
 
 .ft-msg { padding: 10px 14px; color: var(--text3); font-size: 11px; font-style: italic; }
 
@@ -1324,7 +1551,7 @@ header {
     <div class="logo">
       <div class="logo-mark">&#955;</div>
       LMAgent
-      <span class="logo-sub">v6.9.2</span>
+      <span class="logo-sub">v7.0</span>
     </div>
     <div class="header-right">
       <span class="session-pill" id="session-pill"></span>
@@ -1858,7 +2085,7 @@ const HTMLPreview = (() => {
   function _isHtml(path){var lp=(path||'').toLowerCase();return lp.endsWith('.html')||lp.endsWith('.htm');}
   function open(path){
     if(!path)return;
-    var rel=path.replace(/^\/+/,''),url='/serve/'+rel;
+    var rel=path.replace(/^\/+/,''),url='/serve/'+rel+'?token='+encodeURIComponent(_AGENT_TOKEN);
     document.getElementById('hp-path').textContent=rel;
     document.getElementById('hp-popout').href=url;
     document.getElementById('hp-iframe').src=url;
@@ -1947,271 +2174,281 @@ const FileTree = (() => {
   function copyPath(){
     if(!_selected)return;
     var pathEl=document.getElementById('ft-preview-path');
-    navigator.clipboard.writeText(_selected).then(function(){if(pathEl){var orig=pathEl.textContent;pathEl.textContent='\u2713 copied!';setTimeout(function(){pathEl.textContent=orig;},1200);}}).catch(function(){var ta=document.createElement('textarea');ta.value=_selected;document.body.appendChild(ta);ta.select();document.execCommand('copy');ta.remove();});
-  }
-  function askAgent(){if(!_selected)return;var inp=document.getElementById('msg-input');if(inp){inp.value=_selected;inp.focus();inp.dispatchEvent(new Event('input'));}UI.closeFiles();}
-  function previewHtml(){if(_selected&&HTMLPreview._isHtml(_selected))HTMLPreview.open(_selected);}
-  function startAutoRefresh(){stopAutoRefresh();_autoTimer=setInterval(async function(){if(typeof Agent!=='undefined'&&Agent.running()){var mtime=await _fetchMtime();if(mtime!==_lastMtime){_lastMtime=mtime;refresh();}}},2500);}
-  function stopAutoRefresh(){if(_autoTimer){clearInterval(_autoTimer);_autoTimer=null;}}
-  return{load,refresh,filter,copyPath,askAgent,previewHtml,startAutoRefresh,stopAutoRefresh};
-})();
-
-const CMDS=[
-  {cmd:'/help',desc:'Show commands'},{cmd:'/new',desc:'Start a fresh session'},
-  {cmd:'/files',desc:'Browse workspace files'},{cmd:'/sessions',desc:'Browse history'},
-  {cmd:'/tools',desc:'View all tools'},{cmd:'/status',desc:'Connection info'},
-  {cmd:'/mode',desc:'Set permission mode',arg:'<auto|normal|manual>'},
-  {cmd:'/soul',desc:'Agent personality'},{cmd:'/todo',desc:'Session todos'},
-  {cmd:'/plan',desc:'Active plan'},{cmd:'/session',desc:'Current session ID'},
-  {cmd:'/whisper',desc:'Inject a nudge to the running agent',arg:'<message>'},
-  {cmd:'/preview',desc:'Preview an HTML file in the viewer',arg:'<path>'},
-];
-const HELP_TEXT='Slash commands:\n  /help               This text\n  /new                Fresh session\n  /files              Browse workspace files\n  /sessions           Browse sessions\n  /tools              Tool list + MCP\n  /status             Config info\n  /mode auto|normal|manual\n  /soul               Agent personality\n  /todo               Current todos\n  /plan               Current plan\n  /session            Session ID\n  /whisper <text>     Inject mid-run nudge\n  /preview <path>     Preview HTML file\n\nKeyboard shortcuts:\n  \u2191 / \u2193             Cycle input history\n  Ctrl+L           New session\n  Enter            Send\n  Shift+Enter      New line\n  Ctrl+V           Paste image from clipboard\n  Esc              Close HTML preview';
-
-const SlashCmds=(() => {
-  async function run(text){
-    var parts=text.trim().split(/\s+/),cmd=parts[0].toLowerCase(),arg=parts.slice(1).join(' ');
-    var sys=Messages.sys.bind(Messages);
-    switch(cmd){
-      case '/help':sys(HELP_TEXT,'info');break;
-      case '/new':Agent.newSession();break;
-      case '/files':UI.toggleFiles();break;
-      case '/sessions':UI.toggleSessions();break;
-      case '/tools':UI.toggleTools();break;
-      case '/session':sys(Agent.getSession()?'Session: '+Agent.getSession():'No active session.','info');break;
-      case '/status':try{var s=await fetch('/status').then(function(r){return r.json();});sys('Workspace : '+s.workspace+'\nLLM       : '+s.llm_url+'\nSession   : '+(s.current_session?s.current_session.slice(-8):'none')+'\nMode      : '+s.permission_mode+'\nMCP       : '+s.mcp_clients+' server'+(s.mcp_clients!==1?'s':''),'info');}catch(e){sys('Failed: '+e.message,'err');}break;
-      case '/soul':try{var r=await fetch('/soul').then(function(r){return r.json();});sys(r.soul||'(no soul config)','info');}catch(e){sys('Failed: '+e.message,'err');}break;
-      case '/mode':{if(!arg){sys('Usage: /mode auto|normal|manual','warn');break;}try{var r2=await fetch('/mode',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({mode:arg})}).then(function(r){return r.json();});if(r2.ok){Status.mode(arg);sys('Mode \u2192 '+arg,'ok');}else{sys("Invalid mode '"+arg+"'. Use: auto, normal, manual",'err');}}catch(e){sys('Failed: '+e.message,'err');}break;}
-      case '/whisper':{if(!arg){sys('Usage: /whisper <message>','warn');break;}Whisper.queue(arg);sys('Whisper queued \u2192 agent will receive it on next iteration.','ok');break;}
-      case '/preview':{if(!arg){sys('Usage: /preview <path-to-html>','warn');break;}if(!HTMLPreview._isHtml(arg)){sys('Preview only supports .html / .htm files.','warn');break;}HTMLPreview.open(arg);sys('\u25b6 opening preview: '+arg,'ok');break;}
-      case '/todo':case '/plan':{var sid=Agent.getSession();if(!sid){sys('No active session.','warn');break;}try{var r3=await fetch('/cmd',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({cmd:cmd.slice(1),session_id:sid})}).then(function(r){return r.json();});sys(r3.text||'(empty)','info');}catch(e){sys('Failed: '+e.message,'err');}break;}
-      default:sys('Unknown command: '+cmd+'. Type /help for list.','err');
+    navigator.clipboard.writeText(_selected).then(function(){if(pathEl){var orig=pathEl.textContent;pathEl.textContent='\u2713 copied!';setTimeout(function(){pathEl.textContent=orig;},1200);}}).catch(function(){var ta=document.createElement('textarea');ta.value=_selected;document.body.appendChild(ta);ta.select();document.execCommand('copy');ta.remove();if(pathEl){var orig=pathEl.textContent;pathEl.textContent='\u2713 copied!';setTimeout(function(){pathEl.textContent=orig;},1200);}});
     }
+  function askAgent(){
+    if(!_selected)return;
+    var inp=document.getElementById('msg-input');
+    inp.value='Please read and explain this file: '+_selected;
+    inp.focus();
+    UI.closeFiles();
   }
-  return{run};
+  function previewHtml(){
+    if(!_selected)return;
+    HTMLPreview.open(_selected);
+  }
+  function startAutoRefresh(){
+    if(_autoTimer)clearInterval(_autoTimer);
+    _autoTimer=setInterval(async function(){
+      var panel=document.getElementById('files-panel');
+      if(!panel||!panel.classList.contains('open'))return;
+      try{
+        var mtime=await _fetchMtime();
+        if(mtime>_lastMtime){_lastMtime=mtime;await refresh();}
+      }catch(_){}
+    },3000);
+  }
+  return{load,refresh,filter,copyPath,askAgent,previewHtml};
 })();
 
-const Palette=(() => {
-  var idx=-1;
-  var pal=function(){return document.getElementById('palette');};
-  function build(val){
-    var q=val.slice(1).toLowerCase();
-    var matches=q===''?CMDS:CMDS.filter(function(c){return c.cmd.includes(q)||c.desc.toLowerCase().includes(q);});
-    if(!matches.length){close();return;}
-    pal().innerHTML='';
-    matches.forEach(function(c,i){
-      var d=document.createElement('div');d.className='pi'+(i===idx?' sel':'');
-      d.innerHTML='<span class="pi-cmd">'+_esc(c.cmd)+(c.arg?' <span style="color:var(--text3)">'+_esc(c.arg)+'</span>':'')+'</span><span class="pi-desc">'+_esc(c.desc)+'</span>';
-      d.onclick=function(){select(c.cmd);};pal().appendChild(d);
-    });
-    pal().classList.add('open');
-  }
-  function close(){pal().classList.remove('open');idx=-1;}
-  function select(cmd){var inp=document.getElementById('msg-input');inp.value=(cmd==='/mode'||cmd==='/whisper'||cmd==='/preview')?cmd+' ':cmd;close();inp.focus();}
-  function onInput(el){autoResize(el);InputHistory.reset();if(el.value.startsWith('/'))build(el.value);else close();}
-  function onKey(e){
-    var inp=document.getElementById('msg-input'),p=pal();
-    if(p.classList.contains('open')){
-      var items=p.querySelectorAll('.pi');
-      if(e.key==='ArrowDown'){e.preventDefault();idx=Math.min(idx+1,items.length-1);items.forEach(function(el,i){el.classList.toggle('sel',i===idx);});return;}
-      if(e.key==='ArrowUp'){e.preventDefault();idx=Math.max(idx-1,0);items.forEach(function(el,i){el.classList.toggle('sel',i===idx);});return;}
-      if(e.key==='Tab'||(e.key==='Enter'&&idx>=0)){e.preventDefault();(idx>=0?items[idx]:items[0])&&(idx>=0?items[idx]:items[0]).click();return;}
-      if(e.key==='Escape'){close();return;}
-    }
-    if(e.key==='ArrowUp'&&!p.classList.contains('open')){if(inp.value.slice(0,inp.selectionStart).split('\n').length<=1){e.preventDefault();InputHistory.up(inp);return;}}
-    if(e.key==='ArrowDown'&&!p.classList.contains('open')){if(inp.value.slice(inp.selectionEnd).split('\n').length<=1){e.preventDefault();InputHistory.down(inp);return;}}
-    if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();Agent.sendOrStop();}
-  }
-  return{onInput,onKey,close};
-})();
-
-function autoResize(el){requestAnimationFrame(function(){el.style.height='auto';el.style.height=Math.min(el.scrollHeight,140)+'px';});}
-
-document.addEventListener('keydown',function(e){if((e.ctrlKey||e.metaKey)&&e.key==='l'){e.preventDefault();Agent.newSession();}});
-
-const SessionsPanel=(() => {
+const Sessions = (() => {
   async function load(){
     var list=document.getElementById('sessions-list');
-    list.innerHTML='<div style="padding:10px;color:var(--text3);font-size:11px">Loading\u2026</div>';
+    if(!list)return;
+    list.innerHTML='<div style="padding:12px;color:var(--text3);font-size:11px">Loading\u2026</div>';
     try{
-      var sessions=await fetch('/sessions').then(function(r){return r.json();});list.innerHTML='';
-      if(!sessions.length){list.innerHTML='<div style="padding:10px;color:var(--text3);font-size:11px">No sessions yet</div>';return;}
+      var d=await fetch('/sessions').then(function(r){return r.json();});
+      var sessions=d.sessions||[];
+      if(!sessions.length){list.innerHTML='<div style="padding:12px;color:var(--text3);font-size:11px;font-style:italic">No sessions yet</div>';return;}
+      list.innerHTML='';
       sessions.forEach(function(s){
-        var d=document.createElement('div');d.className='session-item'+(s.id===Agent.getSession()?' active':'');
-        d.innerHTML='<div class="si-id">'+_esc(s.id)+'</div><div class="si-task">'+_esc(s.task||'\u2014')+'</div><div class="si-stat '+_esc(s.status)+'">'+_esc(s.status)+' \u00b7 '+s.iterations+' iter</div>';
-        d.onclick=function(){if(Agent.running())return;Agent.setSession(s.id);UI.closeSessions();Messages.sys('resumed '+s.id.slice(-8));};
-        list.appendChild(d);
+        var item=document.createElement('div'); item.className='session-item'+(Agent.getSession()===s.id?' active':'');
+        var statClass=s.status==='completed'?'completed':s.status==='error'||s.status==='interrupted'?'error':s.status==='waiting'?'waiting':s.status==='active'?'active':'';
+        item.innerHTML='<div class="si-id">'+_esc(s.id.slice(-12))+'</div>'
+          +'<div class="si-task">'+_esc(s.task||'(no task)')+'</div>'
+          +'<div class="si-stat '+statClass+'">'+_esc(s.status)
+          +(s.iterations?' \u00b7 '+s.iterations+' iter':'')+'</div>';
+        item.onclick=function(){
+          Agent.setSession(s.id);
+          UI.closeSessions();
+          document.getElementById('msg-input').focus();
+        };
+        list.appendChild(item);
       });
-    }catch(err){list.innerHTML='<div style="padding:10px;color:var(--red);font-size:11px">Error: '+_esc(err.message)+'</div>';}
+    }catch(e){
+      list.innerHTML='<div style="padding:12px;color:var(--red);font-size:11px">\u26a0 '+_esc(String(e.message||e))+'</div>';
+    }
   }
   return{load};
 })();
 
-const ToolsPanel=(() => {
-  var data=null;
+const ToolsPanel = (() => {
+  var _data=null;
   async function load(){
     var list=document.getElementById('tools-list');
-    list.innerHTML='<div style="padding:10px;color:var(--text3);font-size:11px">Loading\u2026</div>';
-    try{data=await fetch('/tools').then(function(r){return r.json();});_render(data,'');}
-    catch(err){list.innerHTML='<div style="padding:10px;color:var(--red);font-size:11px">Error: '+_esc(err.message)+'</div>';}
-  }
-  function _render(d,q){
-    var list=document.getElementById('tools-list');if(!d)return;list.innerHTML='';
-    var ql=q.toLowerCase();
-    function _matches(t){return!ql||t.name.toLowerCase().includes(ql)||(t.description||'').toLowerCase().includes(ql);}
-    function _cat(name,tools,isMcp){
-      var filtered=tools.filter(_matches);if(!filtered.length)return;
-      var cat=document.createElement('div');cat.className='tool-cat'+(isMcp?' mcp-cat':'');
-      var hdr=document.createElement('div');hdr.className='tool-cat-hdr';hdr.textContent=name;cat.appendChild(hdr);
-      filtered.forEach(function(t){var entry=document.createElement('div');entry.className='tool-entry';var params=t.params&&t.params.length?'('+t.params.join(', ')+')':'()';entry.innerHTML='<div class="te-name">'+_esc(t.name)+'<span class="te-params">'+_esc(params)+'</span></div>'+(t.description?'<div class="te-desc">'+_esc(t.description.slice(0,120))+'</div>':'');cat.appendChild(entry);});
-      list.appendChild(cat);
+    if(!list)return;
+    list.innerHTML='<div style="padding:12px;color:var(--text3);font-size:11px">Loading\u2026</div>';
+    try{
+      _data=await fetch('/tools').then(function(r){return r.json();});
+      _render(_data,'');
+    }catch(e){
+      list.innerHTML='<div style="padding:12px;color:var(--red);font-size:11px">\u26a0 '+_esc(String(e.message||e))+'</div>';
     }
-    var builtin=d.builtin||{};Object.keys(builtin).forEach(function(cat){_cat(cat,builtin[cat],false);});
-    var mcp=d.mcp||{};Object.keys(mcp).forEach(function(cat){_cat(cat,mcp[cat],true);});
-    if(!list.children.length)list.innerHTML='<div style="padding:10px;color:var(--text3);font-size:11px">'+(ql?'No tools match.':'No tools available.')+'</div>';
   }
-  function filter(q){if(data)_render(data,q);}
+  function _render(data,q){
+    var list=document.getElementById('tools-list');
+    if(!list)return;
+    var html='',ql=q.toLowerCase();
+    function _cat(name,tools,isMcp){
+      var shown=tools.filter(function(t){return !ql||(t.name||'').toLowerCase().indexOf(ql)!==-1||(t.description||'').toLowerCase().indexOf(ql)!==-1;});
+      if(!shown.length)return;
+      html+='<div class="tool-cat'+(isMcp?' mcp-cat':'')+'"><div class="tool-cat-hdr">'+_esc(name)+'</div>';
+      shown.forEach(function(t){
+        var params=t.params&&t.params.length?'('+t.params.slice(0,4).join(', ')+(t.params.length>4?', \u2026':'')+')':'()';
+        html+='<div class="tool-entry"><div class="te-name">'+_esc(t.name)+'<span class="te-params"> '+_esc(params)+'</span></div>'
+          +(t.description?'<div class="te-desc">'+_esc(t.description.slice(0,100))+'</div>':'')+'</div>';
+      });
+      html+='</div>';
+    }
+    var b=data.builtin||{},m=data.mcp||{};
+    Object.keys(b).forEach(function(k){_cat(k,b[k],false);});
+    Object.keys(m).forEach(function(k){_cat(k,m[k],true);});
+    list.innerHTML=html||'<div style="padding:12px;color:var(--text3);font-size:11px;font-style:italic">No tools match</div>';
+  }
+  function filter(q){if(_data)_render(_data,q);}
   return{load,filter};
 })();
 
-const UI=(() => {
-  function _overlay(show){document.getElementById('overlay').classList.toggle('show',show);}
-  function toggleFiles(){var p=document.getElementById('files-panel'),open=!p.classList.contains('open');closeAll();p.classList.toggle('open',open);_overlay(open);if(open)FileTree.load();}
-  function closeFiles(){document.getElementById('files-panel').classList.remove('open');_overlay(false);FileTree.stopAutoRefresh();}
-  function toggleSessions(){var p=document.getElementById('sessions-panel'),open=!p.classList.contains('open');closeAll();p.classList.toggle('open',open);_overlay(open);if(open)SessionsPanel.load();}
-  function closeSessions(){document.getElementById('sessions-panel').classList.remove('open');_overlay(false);}
-  function toggleTools(){var p=document.getElementById('tools-panel'),open=!p.classList.contains('open');closeAll();p.classList.toggle('open',open);_overlay(open);if(open)ToolsPanel.load();}
-  function closeTools(){document.getElementById('tools-panel').classList.remove('open');_overlay(false);}
-  function closeAll(){['files-panel','sessions-panel','tools-panel'].forEach(function(id){document.getElementById(id).classList.remove('open');});_overlay(false);FileTree.stopAutoRefresh();}
-  return{toggleFiles,closeFiles,toggleSessions,closeSessions,toggleTools,closeTools,closeAll};
+const SlashCmds = (() => {
+  var CMDS=[
+    {cmd:'/new',      desc:'Start a fresh session'},
+    {cmd:'/mode auto',   desc:'Set permission mode: auto'},
+    {cmd:'/mode normal', desc:'Set permission mode: normal'},
+    {cmd:'/mode manual', desc:'Set permission mode: manual'},
+    {cmd:'/sessions', desc:'List recent sessions'},
+    {cmd:'/plan',     desc:'Show current plan'},
+    {cmd:'/todo',     desc:'Show todo list'},
+    {cmd:'/status',   desc:'Agent + MCP status'},
+    {cmd:'/soul',     desc:'Show soul / personality'},
+    {cmd:'/session',  desc:'Show current session ID'},
+    {cmd:'/help',     desc:'Show help'},
+  ];
+  function run(text){
+    var parts=text.trim().split(/\s+/),cmd=parts[0],arg=parts.slice(1).join(' ');
+    if(cmd==='/new'){Agent.newSession();return;}
+    if(cmd==='/mode'&&arg){Status.mode(arg);Messages.sys('\u2713 permission mode \u2192 '+arg,'ok');return;}
+    fetch('/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({message:text,session_id:Agent.getSession(),request_id:'slash_'+Date.now()})}).catch(function(){});
+  }
+  return{run,CMDS};
 })();
 
-(async function init(){
-  document.cookie='agent_token='+encodeURIComponent(_AGENT_TOKEN)+'; path=/; SameSite=Strict';
-  try{var s=await fetch('/status').then(function(r){return r.json();});if(s.permission_mode)Status.mode(s.permission_mode);}catch(_){}
-  document.getElementById('msg-input').focus();
+const Palette = (() => {
+  var _open=false,_sel=0,_filtered=[];
+  function _el(){return document.getElementById('palette');}
+  function _inp(){return document.getElementById('msg-input');}
+  function open(q){
+    q=q||'/'; var ql=q.toLowerCase();
+    _filtered=SlashCmds.CMDS.filter(function(c){return c.cmd.toLowerCase().indexOf(ql)!==-1;});
+    _sel=0; _open=true;
+    var html='';
+    _filtered.forEach(function(c,i){
+      html+='<div class="pi'+(i===0?' sel':'')+'" data-i="'+i+'">'
+        +'<span class="pi-cmd">'+_esc(c.cmd)+'</span>'
+        +'<span class="pi-desc">'+_esc(c.desc)+'</span></div>';
+    });
+    _el().innerHTML=html; _el().classList.add('open');
+    _el().querySelectorAll('.pi').forEach(function(el){
+      el.onmousedown=function(e){e.preventDefault();_apply(parseInt(el.dataset.i));};
+    });
+  }
+  function close(){_open=false;_el().classList.remove('open');_el().innerHTML='';}
+  function _apply(i){
+    if(!_filtered[i])return;
+    _inp().value=_filtered[i].cmd+' '; _inp().focus(); close();
+    _inp().style.height='auto'; _inp().style.height=Math.min(_inp().scrollHeight,140)+'px';
+  }
+  function _highlight(){
+    _el().querySelectorAll('.pi').forEach(function(el,i){el.classList.toggle('sel',i===_sel);});
+  }
+  function onKey(e){
+    var inp=_inp();
+    if(e.key==='ArrowUp'){
+      if(_open){e.preventDefault();_sel=Math.max(0,_sel-1);_highlight();}
+      else InputHistory.up(inp);
+      return;
+    }
+    if(e.key==='ArrowDown'){
+      if(_open){e.preventDefault();_sel=Math.min(_filtered.length-1,_sel+1);_highlight();}
+      else InputHistory.down(inp);
+      return;
+    }
+    if(e.key==='Enter'&&!e.shiftKey){
+      e.preventDefault();
+      if(_open&&_filtered.length){_apply(_sel);}
+      else{close();Agent.sendOrStop();}
+      return;
+    }
+    if(e.key==='Escape'){close();return;}
+    if(e.key==='Tab'&&_open){e.preventDefault();if(_filtered.length)_apply(_sel);return;}
+  }
+  function onInput(inp){
+    inp.style.height='auto'; inp.style.height=Math.min(inp.scrollHeight,140)+'px';
+    var v=inp.value;
+    if(v.startsWith('/')&&v.length>=1&&!Agent.running())open(v);
+    else close();
+  }
+  return{open,close,onKey,onInput};
 })();
+
+const UI = (() => {
+  var _overlay=function(){return document.getElementById('overlay');};
+  function _open(id){
+    document.getElementById(id).classList.add('open');
+    _overlay().classList.add('show');
+  }
+  function _close(id){document.getElementById(id).classList.remove('open');}
+  function closeAll(){
+    ['files-panel','sessions-panel','tools-panel'].forEach(function(id){_close(id);});
+    _overlay().classList.remove('show');
+  }
+  function toggleFiles(){
+    var p=document.getElementById('files-panel');
+    if(p.classList.contains('open')){closeAll();}
+    else{closeAll();_open('files-panel');FileTree.load();}
+  }
+  function toggleSessions(){
+    var p=document.getElementById('sessions-panel');
+    if(p.classList.contains('open')){closeAll();}
+    else{closeAll();_open('sessions-panel');Sessions.load();}
+  }
+  function toggleTools(){
+    var p=document.getElementById('tools-panel');
+    if(p.classList.contains('open')){closeAll();}
+    else{closeAll();_open('tools-panel');ToolsPanel.load();}
+  }
+  function closeFiles(){_close('files-panel');_overlay().classList.remove('show');}
+  function closeSessions(){_close('sessions-panel');_overlay().classList.remove('show');}
+  function closeTools(){_close('tools-panel');_overlay().classList.remove('show');}
+  document.addEventListener('keydown',function(e){
+    if(e.key==='Escape'&&!HTMLPreview.isOpen())closeAll();
+  });
+  return{toggleFiles,toggleSessions,toggleTools,closeFiles,closeSessions,closeTools,closeAll};
+})();
+
+Status.set('ready','');
 </script>
 </body>
 </html>"""
 
 
 # =============================================================================
-# IMAGE UPLOAD
+# PATH VALIDATION HELPER
 # =============================================================================
 
-@app.route("/upload", methods=["POST"])
-@_require_auth
-def upload_image():
-    f = request.files.get("file")
-    if not f or not f.filename:
-        return jsonify({"error": "no file"}), 400
-    ext = Path(f.filename).suffix.lower()
-    if ext not in _UPLOAD_EXTS:
-        return jsonify({"error": f"unsupported extension {ext!r}. Allowed: {sorted(_UPLOAD_EXTS)}"}), 400
+def _validate_ft_path(path: str):
+    from agent_core import Safety
+    if not path or path in (".", ""):
+        return True, "", WORKSPACE
+    ok, err, fp = Safety.validate_path(WORKSPACE, path)
+    if not ok:
+        return False, err, WORKSPACE
+    return True, "", fp
 
-    uploads_dir = WORKSPACE / "uploads"
-    uploads_dir.mkdir(parents=True, exist_ok=True)
-    file_bytes = f.read()
 
-    needs_convert = ext == ".webp" or ext not in {".jpg", ".jpeg", ".png"}
-    if needs_convert:
-        if not _PIL_AVAILABLE:
-            return jsonify({"error": f"Cannot convert {ext!r} — Pillow not installed. Run: pip install Pillow"}), 400
-        try:
-            img = _PIL_Image.open(io.BytesIO(file_bytes))
-            img = img.convert("RGBA" if img.mode in ("RGBA", "LA", "P") else "RGB")
-            buf = io.BytesIO()
-            img.save(buf, format="PNG")
-            file_bytes = buf.getvalue()
-            ext = ".png"
-        except Exception as e:
-            return jsonify({"error": f"image conversion failed: {e}"}), 400
+# =============================================================================
+# ROUTES
+# =============================================================================
 
-    safe_name = re.sub(r"[^\w.\-]", "_", Path(f.filename).stem) + ext
-    filename  = f"{int(time.time())}_{safe_name}"
-    dest      = uploads_dir / filename
-
+def _get_port() -> int:
     try:
-        dest.resolve().relative_to(WORKSPACE)
+        return int(os.environ.get("AGENT_PORT", "7860"))
     except ValueError:
-        return jsonify({"error": "invalid filename"}), 400
+        return 7860
 
-    dest.write_bytes(file_bytes)
-    return jsonify({"path": f"uploads/{filename}", "filename": filename})
-
-
-# =============================================================================
-# MAIN PAGE
-# =============================================================================
 
 @app.route("/")
 def index():
-    token = request.args.get("token", "") or request.headers.get("X-Token", "")
-    if _AGENT_TOKEN and not (token and secrets.compare_digest(token, _AGENT_TOKEN)):
-        scheme = "https" if _SSL_CERT else "http"
-        try:
-            host = request.host or f"localhost:{_PORT}"
-        except Exception:
-            host = "localhost"
-        # QR encodes only the base sign-in URL — user must type the PIN manually
-        base_url = f"{scheme}://{host}/"
-        from urllib.parse import quote as _quote
-        qr_img = _make_qr_data_uri(base_url)
-        return Response(_UNAUTH_HTML.replace("__QR_IMG__", qr_img), mimetype="text/html")
+    if _AGENT_TOKEN:
+        token = (request.headers.get("X-Token", "")
+                 or request.args.get("token", ""))
+        if not token or not secrets.compare_digest(token, _AGENT_TOKEN):
+            proto = "https" if _SSL_CERT and _SSL_KEY else "http"
+            try:
+                host = request.host or f"localhost:{_get_port()}"
+            except Exception:
+                host = f"localhost:{_get_port()}"
+            base_url = f"{proto}://{host}/"
+            qr_img   = _make_qr_data_uri(base_url)
+            return _UNAUTH_HTML.replace("__QR_IMG__", qr_img), 401
+    return Response(
+        HTML.replace("__AGENT_TOKEN__", _AGENT_TOKEN or ""),
+        mimetype="text/html",
+    )
 
-    return Response(HTML.replace("__AGENT_TOKEN__", _AGENT_TOKEN), mimetype="text/html")
-
-
-# =============================================================================
-# SSE STREAM
-# =============================================================================
-
-_SSE_PING = json.dumps({"type": "ping"})
-
-
-@app.route("/stream")
-@_require_auth
-def stream():
-    q = _register_stream_q()
-
-    def gen():
-        with _session_lock:
-            sid  = _current_session_id
-            mode = _current_permission_mode
-        hist = _chatlog_get(sid)
-        yield f"data: {json.dumps({'type':'connect','data':{'session':sid,'mode':mode,'state':_get_agent_state(),'history':[[k,v] for k,v in hist]}})}\n\n"
-        try:
-            while True:
-                try:
-                    kind, payload = q.get(timeout=20)
-                    yield f"data: {json.dumps({'type':kind,'data':payload})}\n\n"
-                except queue.Empty:
-                    yield f"data: {_SSE_PING}\n\n"
-        except GeneratorExit:
-            pass
-        finally:
-            _unregister_stream_q(q)
-
-    return _sse_response(gen())
-
-
-# =============================================================================
-# CHAT
-# =============================================================================
 
 @app.route("/chat", methods=["POST"])
 @_require_auth
 def chat():
-    global _current_session_id
+    global _current_session_id, _current_permission_mode
 
     data       = request.get_json(force=True, silent=True) or {}
     message    = (data.get("message") or "").strip()
     session_id = data.get("session_id") or None
-    request_id = data.get("request_id") or ""
+    request_id = data.get("request_id") or secrets.token_hex(8)
 
     if not message:
         return jsonify({"error": "empty message"}), 400
+
     if not _AGENT_LOCK.acquire(timeout=_AGENT_LOCK_TIMEOUT):
         return jsonify({"error": "agent busy — try again shortly"}), 429
 
@@ -2219,91 +2456,94 @@ def chat():
     with _stop_events_lock:
         _stop_events[request_id] = stop_ev
 
+    perm_mode = _resolve_permission_mode()
+
+    with _session_lock:
+        _current_session_id = session_id
+
     def _run():
-        global _current_session_id
-        with _session_lock:
-            pre = _current_session_id
-            _current_session_id = session_id
-        _chatlog_merge_keys(pre, session_id)
-
-        def whisper_fn():
-            with _whisper_lock:
-                return _whisper_store.pop(0) if _whisper_store else None
-
         try:
-            _execute_agent(message, session_id, request_id, stop_ev,
-                           _resolve_permission_mode(), whisper_fn)
+            _execute_agent(
+                message, session_id, request_id,
+                stop_ev, perm_mode,
+            )
         finally:
+            _AGENT_LOCK.release()
             with _stop_events_lock:
                 _stop_events.pop(request_id, None)
-            _AGENT_LOCK.release()
 
-    threading.Thread(target=_run, daemon=True).start()
-    return jsonify({"ok": True})
+    threading.Thread(
+        target=_run, daemon=True,
+        name=f"agent-{request_id[:8]}",
+    ).start()
+    return jsonify({"ok": True, "request_id": request_id})
 
-
-# =============================================================================
-# STOP
-# =============================================================================
 
 @app.route("/stop", methods=["POST"])
 @_require_auth
 def stop():
     data       = request.get_json(force=True, silent=True) or {}
     request_id = data.get("request_id", "")
+
+    with _active_responses_lock:
+        resp = _active_responses.get(request_id)
+    if resp:
+        try:
+            resp.close()
+        except Exception:
+            pass
+
     with _stop_events_lock:
         ev = _stop_events.get(request_id)
     if ev:
         ev.set()
-    with _active_responses_lock:
-        resp = _active_responses.pop(request_id, None)
-    if resp is not None:
-        try: resp.close()
-        except Exception: pass
+
     return jsonify({"ok": True})
 
-
-# =============================================================================
-# NEW SESSION
-# =============================================================================
 
 @app.route("/new", methods=["POST"])
 @_require_auth
 def new_session():
     global _current_session_id
     with _session_lock:
-        old = _current_session_id
         _current_session_id = None
-    _chatlog_clear(old)
     _set_agent_state("idle")
     return jsonify({"ok": True})
 
 
-# =============================================================================
-# WHISPER / MODE / STATUS / SOUL / SESSIONS / TOOLS / CMD
-# =============================================================================
+@app.route("/stream")
+def stream():
+    token = (request.headers.get("X-Token", "")
+             or request.args.get("token", ""))
+    if _AGENT_TOKEN and not secrets.compare_digest(token, _AGENT_TOKEN):
+        return jsonify({"error": "unauthorized"}), 401
 
-@app.route("/whisper", methods=["POST"])
-@_require_auth
-def whisper():
-    text = ((request.get_json(force=True, silent=True) or {}).get("text") or "").strip()
-    if not text:
-        return jsonify({"error": "empty text"}), 400
-    with _whisper_lock:
-        _whisper_store.append(text)
-    return jsonify({"ok": True})
+    def _gen():
+        q   = _register_stream_q()
+        sid = _current_session_id
 
+        history = _chatlog_get(sid)
+        connect_payload = {
+            "session": sid or "",
+            "state":   _get_agent_state(),
+            "mode":    _current_permission_mode,
+            "history": [[k, v] for k, v in history],
+        }
+        yield f"data: {json.dumps({'type': 'connect', 'data': connect_payload})}\n\n"
 
-@app.route("/mode", methods=["POST"])
-@_require_auth
-def set_mode():
-    global _current_permission_mode
-    mode  = ((request.get_json(force=True, silent=True) or {}).get("mode") or "").strip().lower()
-    valid = {m.value for m in PermissionMode}
-    if mode not in valid:
-        return jsonify({"ok": False, "error": f"invalid mode {mode!r}"}), 400
-    _current_permission_mode = mode
-    return jsonify({"ok": True, "mode": mode})
+        try:
+            while True:
+                try:
+                    kind, payload = q.get(timeout=20)
+                    yield f"data: {json.dumps({'type': kind, 'data': payload})}\n\n"
+                except Exception:
+                    yield ": heartbeat\n\n"
+        except GeneratorExit:
+            pass
+        finally:
+            _unregister_stream_q(q)
+
+    return _sse_response(_gen())
 
 
 @app.route("/status")
@@ -2312,26 +2552,234 @@ def status():
     with _session_lock:
         sid = _current_session_id
     return jsonify({
-        "workspace":        str(WORKSPACE),
-        "llm_url":          getattr(Config, "LLM_URL", ""),
-        "current_session":  sid,
-        "permission_mode":  _current_permission_mode,
-        "mcp_clients":      len(_global_mcp.clients),
-        "agent_state":      _get_agent_state(),
+        "state":      _get_agent_state(),
+        "session_id": sid,
+        "workspace":  str(WORKSPACE),
+        "mode":       _current_permission_mode,
     })
-
-
-@app.route("/soul")
-@_require_auth
-def get_soul():
-    return jsonify({"soul": soul})
 
 
 @app.route("/sessions")
 @_require_auth
 def sessions():
-    return jsonify(SessionManager(WORKSPACE).list_recent(50))
+    mgr  = SessionManager(WORKSPACE)
+    sess = mgr.list_recent(20)
+    return jsonify({"sessions": sess})
 
+
+@app.route("/upload", methods=["POST"])
+@_require_auth
+def upload():
+    if "file" not in request.files:
+        return jsonify({"error": "no file"}), 400
+    f    = request.files["file"]
+    name = f.filename or "upload"
+    ext  = Path(name).suffix.lower()
+    if ext not in _UPLOAD_EXTS:
+        return jsonify({"error": f"unsupported extension: {ext}"}), 400
+
+    safe_name = re.sub(r"[^\w.\-]", "_", Path(name).stem) + ext
+    dest      = WORKSPACE / safe_name
+    counter   = 0
+    while dest.exists():
+        counter += 1
+        dest = WORKSPACE / f"{Path(name).stem}_{counter}{ext}"
+
+    if _PIL_AVAILABLE:
+        try:
+            img = _PIL_Image.open(f.stream)
+            img.verify()
+            f.stream.seek(0)
+            img = _PIL_Image.open(f.stream)
+            if img.width > 4096 or img.height > 4096:
+                img.thumbnail((2048, 2048), _PIL_Image.LANCZOS)
+            img.save(str(dest))
+        except Exception as e:
+            return jsonify({"error": f"invalid image: {e}"}), 400
+    else:
+        f.save(str(dest))
+
+    return jsonify({
+        "ok":       True,
+        "path":     str(dest.relative_to(WORKSPACE)).replace("\\", "/"),
+        "filename": dest.name,
+    })
+
+
+@app.route("/whisper", methods=["POST"])
+@_require_auth
+def whisper():
+    data = request.get_json(force=True, silent=True) or {}
+    text = (data.get("text") or "").strip()
+    if not text:
+        return jsonify({"error": "empty"}), 400
+    with _whisper_lock:
+        _whisper_store.append(text)
+    return jsonify({"ok": True})
+
+
+@app.route("/filetree")
+@_require_auth
+def filetree():
+    path = request.args.get("path", ".").strip()
+    ok, err, dp = _validate_ft_path(path)
+    if not ok:
+        return jsonify({"error": err}), 400
+    if not dp.is_dir():
+        return jsonify({"error": "not a directory"}), 400
+    try:
+        entries = []
+        for item in sorted(dp.iterdir()):
+            if item.name.startswith("."):
+                continue
+            try:
+                stat = item.stat()
+                rel  = str(item.relative_to(WORKSPACE)).replace("\\", "/")
+                entries.append({
+                    "name":  item.name,
+                    "path":  rel,
+                    "type":  "dir" if item.is_dir() else "file",
+                    "size":  stat.st_size if item.is_file() else 0,
+                    "ext":   item.suffix.lower() if item.is_file() else "",
+                    "mtime": stat.st_mtime,
+                })
+            except Exception:
+                continue
+        return jsonify({"entries": entries})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/fileread")
+@_require_auth
+def fileread():
+    path = request.args.get("path", "").strip()
+    ok, err, fp = _validate_ft_path(path)
+    if not ok:
+        return jsonify({"error": err}), 400
+    if not fp.is_file():
+        return jsonify({"error": "not a file"}), 400
+
+    MAX_PREVIEW = 100_000
+    from agent_core import Config as _Cfg
+    if fp.suffix.lower() in _Cfg.BINARY_EXTS:
+        return jsonify({"binary": True, "size": fp.stat().st_size})
+    try:
+        raw  = fp.read_bytes()
+        text = raw.decode("utf-8", errors="replace")
+        return jsonify({
+            "content":   text[:MAX_PREVIEW],
+            "truncated": len(text) > MAX_PREVIEW,
+            "size":      len(raw),
+        })
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/workspace/mtime")
+@_require_auth
+def workspace_mtime():
+    try:
+        mtime = max(
+            (p.stat().st_mtime for p in WORKSPACE.rglob("*")
+             if p.is_file()
+             and not any(part.startswith(".") for part in p.relative_to(WORKSPACE).parts)),
+            default=0,
+        )
+        return jsonify({"mtime": mtime})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.after_request
+def _security_headers(response):
+    h = response.headers
+    h["X-Content-Type-Options"] = "nosniff"
+    h["Referrer-Policy"]        = "no-referrer"
+    if request.path.startswith("/serve/"):
+        h["Cross-Origin-Embedder-Policy"] = "credentialless"
+        h["Cross-Origin-Opener-Policy"]   = "same-origin"
+    else:
+        h["X-Frame-Options"]         = "DENY"
+        h["Content-Security-Policy"] = (
+            "default-src 'self'; "
+            "script-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com; "
+            "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
+            "font-src https://fonts.gstatic.com; "
+            "img-src 'self' data: blob:; "
+            "connect-src 'self'"
+        )
+    return response
+
+
+@app.route("/serve/<path:rel_path>")
+def serve_file(rel_path: str):
+    token = (request.headers.get("X-Token", "")
+             or request.args.get("token", "")
+             or request.cookies.get("agent_token", ""))
+    if _AGENT_TOKEN and not secrets.compare_digest(token, _AGENT_TOKEN):
+        return Response("Unauthorized", status=401, mimetype="text/plain")
+    ok, err, fp = _validate_ft_path(rel_path)
+    if not ok or not fp.is_file():
+        return Response("Not found", status=404, mimetype="text/plain")
+    mime = _mimetypes.guess_type(str(fp))[0] or "application/octet-stream"
+    try:
+        raw = fp.read_bytes()
+
+        if mime == "text/html":
+            html = raw.decode("utf-8", errors="replace")
+            base_dir = str(fp.parent.relative_to(WORKSPACE)).replace("\\", "/")
+            if base_dir == ".":
+                base_dir = ""
+
+            def _rewrite(m):
+                attr  = m.group(1)
+                path  = m.group(2)
+                quote = m.group(3)
+                if path.startswith(("http://", "https://", "//", "data:", "javascript:", "#", "/serve/")):
+                    return m.group(0)
+                if path.startswith("/"):
+                    serve_path = f"/serve{path}"
+                else:
+                    prefix = f"{base_dir}/" if base_dir else ""
+                    serve_path = f"/serve/{prefix}{path}"
+                sep = "&" if "?" in serve_path else "?"
+                return f"{attr}{serve_path}{sep}token={token}{quote}"
+
+            html = re.sub(
+                r'((?:src|href)\s*=\s*["\'])([^"\']+)(["\'])',
+                _rewrite,
+                html
+            )
+            return Response(html.encode("utf-8"), mimetype="text/html")
+
+        if mime == "text/css":
+            css = raw.decode("utf-8", errors="replace")
+            base_dir = str(fp.parent.relative_to(WORKSPACE)).replace("\\", "/")
+            if base_dir == ".":
+                base_dir = ""
+
+            def _rewrite_css(m):
+                path = m.group(1).strip("'\"")
+                if path.startswith(("http://", "https://", "//", "data:", "/serve/")):
+                    return m.group(0)
+                if path.startswith("/"):
+                    serve_path = f"/serve{path}"
+                else:
+                    prefix = f"{base_dir}/" if base_dir else ""
+                    serve_path = f"/serve/{prefix}{path}"
+                sep = "&" if "?" in serve_path else "?"
+                return f"url('{serve_path}{sep}token={token}')"
+
+            css = re.sub(r'url\(([^)]+)\)', _rewrite_css, css)
+            return Response(css.encode("utf-8"), mimetype="text/css")
+
+        return Response(raw, mimetype=mime)
+
+    except PermissionError:
+        return Response("Permission denied", status=403, mimetype="text/plain")
+    except Exception as exc:
+        return Response(f"Error: {exc}", status=500, mimetype="text/plain")
 
 @app.route("/tools")
 @_require_auth
@@ -2339,231 +2787,114 @@ def tools():
     return jsonify(_build_tools_payload())
 
 
-@app.route("/cmd", methods=["POST"])
-@_require_auth
-def cmd():
-    import contextlib as _ctx
-    data       = request.get_json(force=True, silent=True) or {}
-    command    = data.get("cmd", "").strip()
-    session_id = data.get("session_id", "").strip()
-    if not session_id:
-        return jsonify({"error": "no session_id"}), 400
-    buf = io.StringIO()
-    if command == "todo":
-        with _ctx.redirect_stdout(buf): TodoManager(WORKSPACE, session_id).display()
-    elif command == "plan":
-        with _ctx.redirect_stdout(buf): PlanManager(WORKSPACE, session_id).display()
+# =============================================================================
+# BACKGROUND SCHEDULER
+# =============================================================================
+
+def _start_web_scheduler() -> None:
+        # Patch run_agent inside agent_main so the scheduler's workers go
+        # through _execute_agent instead of calling run_agent directly.
+        # This gives every scheduled resume the full SSE broadcast pipeline
+        # (token_cb, thinking_cb, tool events, done/error signals) so the
+        # frontend transitions correctly out of the "waiting" state.
+        #
+        # _execute_agent uses the *locally-imported* run_agent reference
+        # (from `from agent_main import run_agent`), NOT _agent_main_mod.run_agent,
+        # so there is no recursion.
+        _orig_run_agent = _agent_main_mod.run_agent
+
+        def _sched_run_agent(
+            task,
+            workspace,
+            permission_mode=PermissionMode.AUTO,
+            resume_session=None,
+            plan_first=False,
+            mode="interactive",
+            event_callback=None,
+            soul="",
+            whisper_fn=None,
+        ):
+            request_id = f"sched_{secrets.token_hex(6)}"
+            stop_ev    = threading.Event()
+
+            with _stop_events_lock:
+                _stop_events[request_id] = stop_ev
+
+            if not _AGENT_LOCK.acquire(timeout=_AGENT_LOCK_TIMEOUT):
+                Log.warning("[web-scheduler] agent busy — skipping scheduled task")
+                return AgentResult(
+                    status="error",
+                    final_answer="agent busy",
+                    events=[],
+                    session_id=resume_session or "",
+                    iterations=0,
+                )
+
+            try:
+                _execute_agent(
+                    task, resume_session, request_id, stop_ev, permission_mode
+                )
+                with _session_lock:
+                    sid = _current_session_id or resume_session or ""
+                status = "waiting" if _get_agent_state() == "waiting" else "completed"
+                return AgentResult(
+                    status=status,
+                    final_answer="",
+                    events=[],
+                    session_id=sid,
+                    iterations=0,
+                )
+            finally:
+                _AGENT_LOCK.release()
+                with _stop_events_lock:
+                    _stop_events.pop(request_id, None)
+
+        _agent_main_mod.run_agent = _sched_run_agent
+
+        def _run():
+            Log.set_silent(True)
+            try:
+                _agent_main_mod.run_scheduler(WORKSPACE, soul=soul)
+            except Exception as e:
+                Log.error(f"[web scheduler] crashed: {e}")
+
+        t = threading.Thread(target=_run, daemon=True, name="web-scheduler")
+        t.start()
+        Log.info("[web] Background scheduler started")
+
+
+
+# =============================================================================
+# ENTRYPOINT
+# =============================================================================
+
+def main() -> None:
+    Log.set_silent(False)
+    port = _get_port()
+
+    proto = "https" if _SSL_CERT and _SSL_KEY else "http"
+    try:
+        hostname = socket.gethostname()
+        local_ip = socket.gethostbyname(hostname)
+    except Exception:
+        local_ip = "localhost"
+
+    print(f"\n{'=' * 60}")
+    print(f"  LMAgent Web Interface v7.0")
+    print(f"{'=' * 60}")
+    print(f"  Local  : {proto}://localhost:{port}")
+    print(f"  Network: {proto}://{local_ip}:{port}")
+    print(f"  PIN    : {_AGENT_TOKEN}")
+    print(f"  WS     : {WORKSPACE}")
+    print(f"{'=' * 60}\n")
+
+    _start_web_scheduler()
+
+    if _SSL_CERT and _SSL_KEY:
+        app.run(host=_HOST, port=port, debug=False,
+                threaded=True, ssl_context=(_SSL_CERT, _SSL_KEY))
     else:
-        return jsonify({"error": f"unknown cmd {command!r}"}), 400
-    text = re.sub(r"\x1b\[[0-9;]*m", "", buf.getvalue()).strip()
-    return jsonify({"text": text or f"(no {command} data)"})
-
-
-# =============================================================================
-# FILE TREE
-# =============================================================================
-
-_FT_IGNORE      = frozenset({"__pycache__", "node_modules", ".mypy_cache",
-                              ".pytest_cache", ".tox", ".venv", "venv"})
-_FT_MAX_ENTRIES = 2000
-
-
-def _ft_safe(rel):
-    try:
-        target = (WORKSPACE / rel).resolve()
-        target.relative_to(WORKSPACE)
-        return target
-    except Exception:
-        return None
-
-
-@app.route("/filetree")
-@_require_auth
-def filetree():
-    tgt = _ft_safe(request.args.get("path", ".").strip())
-    if tgt is None or not tgt.is_dir():
-        return jsonify({"error": "invalid path"}), 400
-    entries = []
-    try:
-        items = sorted(tgt.iterdir(), key=lambda p: (p.is_file(), p.name.lower()))
-    except PermissionError:
-        return jsonify({"entries": []})
-    for p in items[:_FT_MAX_ENTRIES]:
-        if p.name.startswith(".") or p.name in _FT_IGNORE:
-            continue
-        rel_path = str(p.relative_to(WORKSPACE)).replace("\\", "/")
-        if p.is_dir():
-            entries.append({"name": p.name, "path": rel_path, "type": "dir"})
-        else:
-            st = p.stat()
-            entries.append({"name": p.name, "path": rel_path, "type": "file",
-                            "size": st.st_size, "ext": p.suffix.lower()})
-    return jsonify({"entries": entries})
-
-
-@app.route("/fileread")
-@_require_auth
-def fileread():
-    tgt = _ft_safe(request.args.get("path", "").strip())
-    if tgt is None or not tgt.is_file():
-        return jsonify({"error": "not found"}), 404
-    MAX_PREVIEW = 100 * 1024
-    try:
-        if b"\x00" in tgt.read_bytes()[:8192]:
-            return jsonify({"binary": True, "size": tgt.stat().st_size})
-        text = tgt.read_text(encoding="utf-8", errors="replace")
-    except Exception as e:
-        return jsonify({"error": str(e)})
-    return jsonify({"content": text[:MAX_PREVIEW], "truncated": len(text) > MAX_PREVIEW,
-                    "size": tgt.stat().st_size})
-
-
-@app.route("/workspace/mtime")
-@_require_auth
-def workspace_mtime():
-    try:
-        return jsonify({"mtime": WORKSPACE.stat().st_mtime})
-    except Exception:
-        return jsonify({"mtime": 0})
-
-
-# =============================================================================
-# HTML VIEWER  (/serve/)
-# =============================================================================
-
-@app.route("/serve/<path:filepath>")
-def serve_workspace(filepath):
-    token = (request.args.get("token", "")
-             or request.headers.get("X-Token", "")
-             or request.cookies.get("agent_token", ""))
-    if _AGENT_TOKEN and not (token and secrets.compare_digest(token, _AGENT_TOKEN)):
-        return Response("Unauthorized", status=401, mimetype="text/plain")
-    tgt = _ft_safe(filepath)
-    if tgt is None or not tgt.is_file():
-        return Response("Not found", status=404, mimetype="text/plain")
-    mime = _mimetypes.guess_type(str(tgt))[0] or "application/octet-stream"
-    try:
-        return Response(tgt.read_bytes(), mimetype=mime)
-    except PermissionError:
-        return Response("Permission denied", status=403, mimetype="text/plain")
-    except Exception as exc:
-        return Response(f"Error: {exc}", status=500, mimetype="text/plain")
-
-
-# =============================================================================
-# WEB SCHEDULER
-# =============================================================================
-
-_waking_sessions:      set           = set()
-_waking_sessions_lock: threading.Lock = threading.Lock()
-
-
-def _web_scheduler():
-    session_mgr = SessionManager(WORKSPACE)
-    state_mgr   = StateManager(WORKSPACE)
-    poll_s      = int(os.environ.get("WEB_SCHEDULER_POLL", "30"))
-    Log.info(f"[web-scheduler] started, poll={poll_s}s")
-
-    while True:
-        try:
-            next_wake = None
-            for session in session_mgr.list_recent(200):
-                if session.get("status") != "waiting":
-                    continue
-                sid = session["id"]
-                with _waking_sessions_lock:
-                    if sid in _waking_sessions:
-                        continue
-                saved = state_mgr.load(sid)
-                if not saved or not saved.wait_state:
-                    continue
-                ws = WaitState.from_dict(saved.wait_state)
-                if not ws.is_ready():
-                    try:
-                        from datetime import datetime
-                        remaining = (datetime.fromisoformat(ws.resume_after) - datetime.now()).total_seconds()
-                        if remaining > 0:
-                            next_wake = remaining if next_wake is None else min(next_wake, remaining)
-                    except Exception:
-                        pass
-                    continue
-
-                Log.info(f"[web-scheduler] waking session {sid[:8]}")
-                with _waking_sessions_lock:
-                    _waking_sessions.add(sid)
-
-                def _do_wake(sid=sid):
-                    global _current_session_id
-                    wake_req_id = f"sched-{sid}"
-                    stop_ev     = threading.Event()
-                    with _stop_events_lock:
-                        _stop_events[wake_req_id] = stop_ev
-
-                    if not _AGENT_LOCK.acquire(timeout=10):
-                        Log.warning(f"[web-scheduler] lock busy, will retry {sid[:8]}")
-                        with _waking_sessions_lock:
-                            _waking_sessions.discard(sid)
-                        with _stop_events_lock:
-                            _stop_events.pop(wake_req_id, None)
-                        return
-
-                    try:
-                        _broadcast(("status", f"waking session {sid[:8]}\u2026"))
-                        with _session_lock:
-                            _current_session_id = sid
-                        _execute_agent("Continue from scheduled wake-up", sid,
-                                       wake_req_id, stop_ev, PermissionMode.AUTO)
-                    finally:
-                        with _stop_events_lock:
-                            _stop_events.pop(wake_req_id, None)
-                        with _waking_sessions_lock:
-                            _waking_sessions.discard(sid)
-                        _AGENT_LOCK.release()
-
-                threading.Thread(target=_do_wake, daemon=True,
-                                 name=f"web-sched-{sid[:8]}").start()
-
-        except Exception as poll_err:
-            Log.error(f"[web-scheduler] poll error: {poll_err}")
-
-        sleep_for = max(5.0, min(poll_s, (next_wake + 0.5) if next_wake else poll_s))
-        time.sleep(sleep_for)
-
-
-# =============================================================================
-# STARTUP
-# =============================================================================
-
-def _get_local_ip():
-    try:
-        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        s.connect(("8.8.8.8", 80))
-        ip = s.getsockname()[0]
-        s.close()
-        return ip
-    except Exception:
-        return "127.0.0.1"
-
-
-_PORT = int(os.environ.get("AGENT_PORT", "7860"))
-
-
-def main():
-    proto    = "https" if _SSL_CERT and _SSL_KEY else "http"
-    local_ip = _get_local_ip()
-    print("\n" + colored("=" * 60, Colors.CYAN))
-    print(colored("  LMAgent Web  v6.9.2", Colors.YELLOW, bold=True))
-    print(colored("=" * 60, Colors.CYAN))
-    print(colored(f"  Workspace : {WORKSPACE}", Colors.CYAN))
-    print(colored(f"  Local     : {proto}://127.0.0.1:{_PORT}/?token={_AGENT_TOKEN}", Colors.GREEN))
-    print(colored(f"  Network   : {proto}://{local_ip}:{_PORT}/?token={_AGENT_TOKEN}", Colors.GREEN))
-    print(colored(f"  PIN       : {_AGENT_TOKEN}", Colors.YELLOW))
-    print(colored("=" * 60, Colors.CYAN) + "\n")
-
-    ssl_ctx = (_SSL_CERT, _SSL_KEY) if _SSL_CERT and _SSL_KEY else None
-    threading.Thread(target=_web_scheduler, daemon=True, name="web-scheduler").start()
-    app.run(host=_HOST, port=_PORT, debug=False, threaded=True,
-            ssl_context=ssl_ctx, use_reloader=False)
+        app.run(host=_HOST, port=port, debug=False, threaded=True)
 
 
 if __name__ == "__main__":
