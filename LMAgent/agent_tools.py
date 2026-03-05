@@ -5,9 +5,10 @@ agent_tools.py — Tool layer for LMAgent.
 Contains: tool handlers, schemas, registry, vision support, git helpers.
 LLM client, agent loops, and system prompts live in agent_llm.py.
 
-Backward compatibility: everything that was previously importable from
-agent_tools is still importable from agent_tools via the re-export block
-at the bottom of this file.  No external files need to change.
+Sub-agent delegation is handled by the Brief-Contract Architecture (BCA)
+in agent_bca.py. The old tool_task / run_sub_agent / _build_parent_context
+are replaced; the 'task' tool entry-point is kept for backward compatibility
+but now routes through BCA. New tools: delegate, decompose, report_result.
 """
 
 import base64
@@ -36,12 +37,22 @@ from agent_core import (
 )
 from sandboxed_shell import run_sandboxed, sandbox_info
 
-# Backward-compat alias for any external code that imported get_powershell_session.
+# BCA sub-agent system — brief/contract delegation
+from agent_bca import (
+    tool_report_result,
+    tool_delegate,
+    tool_decompose,
+    tool_task_bca,
+    _get_bca_tool_schemas,
+    MAX_DEPTH,
+)
+
+# Backward-compat alias
 get_powershell_session = get_shell_session
 
 
 # =============================================================================
-# SHELL QUOTING UTILITIES  (used only by git helpers — not exposed to LLM)
+# SHELL QUOTING UTILITIES
 # =============================================================================
 
 def _shell_quote(s: str) -> str:
@@ -68,13 +79,6 @@ def _validate_git_ref(name: str) -> Tuple[bool, str]:
     return True, ""
 
 
-# =============================================================================
-# SECURE GIT EXECUTION HELPER  (internal only — not a tool the LLM can call)
-#
-# Routes through run_sandboxed() so git executes inside the Docker container
-# (or process-group fallback) rather than on the host shell.
-# =============================================================================
-
 def _git_safe(workspace: Path, cmd: str) -> Tuple[str, int]:
     ok, reason = Safety.validate_command(cmd, workspace)
     if not ok:
@@ -86,7 +90,7 @@ def _git_safe(workspace: Path, cmd: str) -> Tuple[str, int]:
 # VISION SUPPORT
 # =============================================================================
 
-_vision_cache: Optional[bool] = None   # None = unchecked, True/False = result
+_vision_cache: Optional[bool] = None
 _vision_lock = threading.Lock()
 
 _VISION_MIME_MAP: Dict[str, str] = {
@@ -99,17 +103,6 @@ _VISION_MIME_MAP: Dict[str, str] = {
 
 
 def _detect_vision_support() -> bool:
-    """
-    Probe LM Studio's /api/v1/models endpoint to determine whether the currently
-    loaded model has vision capability.  Result is cached for the process lifetime.
-
-    Controlled by the VISION_ENABLED env var (read via Config):
-      "true"  — always report vision available (skip the probe)
-      "false" — always report no vision (skip the probe)
-      "auto"  — probe LM Studio (default)
-
-    Call vision_cache_invalidate() to force a fresh probe.
-    """
     global _vision_cache
     with _vision_lock:
         if _vision_cache is not None:
@@ -123,7 +116,6 @@ def _detect_vision_support() -> bool:
             _vision_cache = False
             return False
 
-        # "auto" — probe LM Studio's native model list endpoint
         base = getattr(Config, "LLM_BASE_URL", "http://localhost:1234")
         try:
             resp = requests.get(
@@ -135,40 +127,33 @@ def _detect_vision_support() -> bool:
             models = resp.json().get("models", [])
             target = (Config.LLM_MODEL or "").lower()
 
-            # First pass: try to match the configured model name exactly.
             for m in models:
                 key = (m.get("key") or m.get("id") or "").lower()
                 if target and target not in key:
                     continue
                 if m.get("capabilities", {}).get("vision", False):
-                    Log.info(f"Vision capability detected on configured model: {key}")
+                    Log.info(f"Vision capability detected: {key}")
                     _vision_cache = True
                     return True
 
-            # Second pass: accept any loaded vision-capable model as a fallback.
             for m in models:
                 if m.get("capabilities", {}).get("vision", False):
                     key = m.get("key") or m.get("id") or "unknown"
-                    Log.info(f"Vision fallback model found: {key}")
+                    Log.info(f"Vision fallback model: {key}")
                     _vision_cache = True
                     return True
 
-            Log.info("No vision-capable model found in LM Studio — vision tool disabled")
+            Log.info("No vision-capable model found — vision tool disabled")
             _vision_cache = False
 
         except Exception as e:
-            Log.warning(f"Vision probe failed ({e}) — disabling vision tool for this session")
+            Log.warning(f"Vision probe failed ({e}) — disabling vision for this session")
             _vision_cache = False
 
         return _vision_cache
 
 
 def vision_cache_invalidate() -> None:
-    """Force a fresh vision-capability probe on the next tool assembly.
-
-    Call this whenever the user loads a different model in LM Studio so the
-    vision tool appears/disappears appropriately without restarting the server.
-    """
     global _vision_cache
     with _vision_lock:
         _vision_cache = None
@@ -180,24 +165,12 @@ def tool_vision(
     path: str,
     prompt: str = "Describe this image in detail.",
 ) -> Dict[str, Any]:
-    """Send a workspace image to the loaded vision model and return its description.
-
-    The tool validates the path, base64-encodes the image, and submits it to the
-    OpenAI-compatible /v1/chat/completions endpoint using the image_url content
-    type.  Only JPEG, PNG, GIF, and WebP files are accepted.
-
-    Returns:
-        {"success": True, "path": "...", "description": "<model output>"}
-    or
-        {"success": False, "error": "<reason>"}
-    """
     if not _detect_vision_support():
         return {
             "success": False,
             "error": (
                 "No vision-capable model is currently loaded in LM Studio. "
-                "Load a VLM (e.g. LLaVA, Qwen-VL, Pixtral) and try again, "
-                "or set VISION_ENABLED=true in .env to skip the check."
+                "Load a VLM (e.g. LLaVA, Qwen-VL, Pixtral) and try again."
             ),
         }
 
@@ -212,26 +185,20 @@ def tool_vision(
         supported = ", ".join(sorted(_VISION_MIME_MAP.keys()))
         return {
             "success": False,
-            "error": (
-                f"Unsupported image type '{fp.suffix}'. "
-                f"Supported extensions: {supported}"
-            ),
+            "error": f"Unsupported image type '{fp.suffix}'. Supported: {supported}",
         }
 
     try:
         b64 = base64.b64encode(fp.read_bytes()).decode("utf-8")
     except Exception as e:
-        return {"success": False, "error": f"Could not read image file: {e}"}
+        return {"success": False, "error": f"Could not read image: {e}"}
 
     payload: Dict[str, Any] = {
         "messages": [
             {
                 "role": "user",
                 "content": [
-                    {
-                        "type": "image_url",
-                        "image_url": {"url": f"data:{mime};base64,{b64}"},
-                    },
+                    {"type": "image_url", "image_url": {"url": f"data:{mime};base64,{b64}"}},
                     {"type": "text", "text": prompt},
                 ],
             }
@@ -464,17 +431,6 @@ def tool_shell(
     timeout: int = 30,
     max_memory_mb: int = 512,
 ) -> Dict[str, Any]:
-    """
-    Run *command* inside a platform-appropriate sandbox.
-
-    Sandbox backends (auto-selected):
-      • Windows + pywin32  : Job Object — kill_on_job_close + memory limit.
-      • Windows, no pywin32: psutil tree-kill on timeout.
-      • macOS / Linux      : new process group (os.setsid) + RLIMIT_AS +
-        RLIMIT_CPU — entire group killed on timeout or error.
-
-    stdout and stderr are merged; output is capped at 32 KB.
-    """
     ok, reason = Safety.validate_command(command, workspace)
     if not ok:
         return {"success": False, "error": f"Command blocked by safety check: {reason}"}
@@ -490,9 +446,8 @@ def tool_shell(
             max_output_bytes=32_768,
             max_memory_mb=max_memory_mb,
         )
-        success = exit_code == 0
         return {
-            "success":   success,
+            "success":   exit_code == 0,
             "exit_code": exit_code,
             "output":    output,
             "sandbox":   sandbox_info()["backend"],
@@ -502,7 +457,7 @@ def tool_shell(
 
 
 # =============================================================================
-# TOOL HANDLERS — GIT  (sandboxed via _git_safe → run_sandboxed)
+# TOOL HANDLERS — GIT
 # =============================================================================
 
 def tool_git_status(workspace: Path) -> Dict[str, Any]:
@@ -822,109 +777,22 @@ def tool_task_reconcile(workspace: Path) -> Dict[str, Any]:
 
 
 # =============================================================================
-# SUB-AGENT CONTEXT HELPER  (used by tool_task below)
+# BACKWARD-COMPAT: tool_task → routes through BCA
+#
+# External code that calls tool_task() directly still works. The 'task' schema
+# entry is kept so agents that learned the old tool name keep working. Both
+# 'task' and the new 'delegate'/'decompose' tools are available.
 # =============================================================================
-
-def _build_parent_context(parent_messages: List[Dict[str, Any]],
-                           max_chars: int = 12000) -> str:
-    sections: List[str] = []
-    for msg in reversed(parent_messages):
-        role = msg.get("role", "")
-        if role == "tool":
-            name = msg.get("name", "tool")
-            raw  = msg.get("content", "")
-            try:
-                parsed = json.loads(raw)
-                text   = (parsed.get("output") or parsed.get("stdout")
-                          or parsed.get("content") or parsed.get("result") or raw)
-            except (json.JSONDecodeError, AttributeError):
-                text = raw
-            text = str(text).strip()
-            if text:
-                sections.append(f"[{name} result]\n{text[:3000]}")
-        elif role == "assistant":
-            content = msg.get("content", "")
-            if content and len(content) > 40:
-                sections.append(f"[reasoning]\n{content[:800]}")
-    if not sections:
-        return ""
-    sections.reverse()
-    combined = "\n\n---\n\n".join(sections)
-    if len(combined) > max_chars:
-        combined = combined[:max_chars] + "\n\n[...trimmed]"
-    return combined
-
 
 def tool_task(workspace: Path, task_type: str,
               instructions: str, file_path: str) -> Dict[str, Any]:
-    """Delegate file creation to an isolated sub-agent.
-
-    Uses a lazy import of run_sub_agent / SUB_AGENT_SYSTEM_PROMPT from
-    agent_llm to break the circular dependency:
-        agent_llm imports agent_tools (schemas/handlers at module level)
-        agent_tools lazy-imports agent_llm only when tool_task() is called
-    """
-    if not Config.ENABLE_SUB_AGENTS:
-        return {"success": False, "error": "Sub-agents disabled"}
-
-    # Lazy import — by call-time both modules are fully initialised.
-    from agent_llm import run_sub_agent, SUB_AGENT_SYSTEM_PROMPT  # noqa: PLC0415
-
-    try:
-        Log.task(f"Sub-agent: Create {task_type} → {file_path}")
-        ctx             = get_current_context()
-        parent_messages = ctx.get("messages") or []
-        ctx_content     = _build_parent_context(parent_messages)
-        if ctx_content:
-            ctx_note = ("\n\nPARENT CONTEXT (research/data gathered by parent agent):"
-                        f"\n\n{ctx_content}")
-            step1    = "Use the parent context above as your primary data source"
-        else:
-            ctx_note, step1 = "", "Create the file at the specified path"
-        sub_sid = SessionManager(ctx["workspace"]).create(
-            f"[CREATE-{task_type}] {file_path}",
-            parent_session=ctx["session_id"],
-        )
-        sub_messages = [
-            {"role": "system", "content": SUB_AGENT_SYSTEM_PROMPT},
-            {"role": "user",   "content": (
-                f"CREATE FILE: {file_path}\n"
-                f"TYPE: {task_type}"
-                f"{ctx_note}\n\n"
-                f"INSTRUCTIONS:\n{instructions}\n\n"
-                f"REQUIREMENTS:\n"
-                f"1. {step1}\n"
-                f"2. Create the file at the specified path\n"
-                f"3. Follow the instructions exactly\n"
-                f"4. Use the write tool to save it\n"
-                f"5. Say TASK_COMPLETE when done\n\n"
-                f"Do NOT ask questions. Create the file now."
-            )},
-        ]
-        result = run_sub_agent(
-            messages=sub_messages,
-            workspace=ctx["workspace"],
-            session_id=sub_sid,
-            max_iterations=Config.MAX_SUB_AGENT_ITERATIONS,
-            stream_callback=ctx.get("stream_callback"),
-        )
-        Log.task(f"Sub-agent finished: {result['status']}")
-        return {"success":    result["status"] == "completed",
-                "file_path":  file_path,
-                "iterations": result["iterations"],
-                "session_id": sub_sid}
-    except Exception as e:
-        Log.error(f"Sub-agent failed: {e}")
-        return {"success": False, "error": str(e)}
+    """Backward-compatible entry point — routes through BCA (tool_task_bca)."""
+    return tool_task_bca(workspace, task_type, instructions, file_path)
 
 
 # =============================================================================
 # TOOL REGISTRY
 # =============================================================================
-
-# TOOL_SCHEMAS is the full universe of possible tools.
-# Never pass this directly to LLMClient.call() — use get_available_tools() instead,
-# which filters out "vision" when no VLM is detected.
 
 TOOL_SCHEMAS: List[Dict[str, Any]] = [
     {"type": "function", "function": {
@@ -971,32 +839,19 @@ TOOL_SCHEMAS: List[Dict[str, Any]] = [
                        "properties": {"path": {"type": "string"}},
                        "required": ["path"]}}},
 
-    # ── sandboxed shell ───────────────────────────────────────────────────────
     {"type": "function", "function": {
         "name": "shell",
         "description": (
             "Run a shell command inside a platform sandbox (bash on macOS/Linux, "
             "cmd on Windows). stdout and stderr are merged. Output is capped at 32 KB. "
-            "Timeout defaults to 30 s (max 120 s). Memory defaults to 512 MB (max 2 GB). "
-            "Use for build commands, tests, installers, package managers, or any "
-            "operation the file tools cannot handle directly. "
-            "All commands are validated by the safety layer before execution."
+            "Timeout defaults to 30 s (max 120 s). Memory defaults to 512 MB (max 2 GB)."
         ),
         "parameters": {
             "type": "object",
             "properties": {
-                "command": {
-                    "type": "string",
-                    "description": "The shell command to run.",
-                },
-                "timeout": {
-                    "type": "integer",
-                    "description": "Max seconds before the process is killed (1–120, default 30).",
-                },
-                "max_memory_mb": {
-                    "type": "integer",
-                    "description": "Memory limit in MB (64–2048, default 512).",
-                },
+                "command":        {"type": "string"},
+                "timeout":        {"type": "integer"},
+                "max_memory_mb":  {"type": "integer"},
             },
             "required": ["command"],
         }}},
@@ -1024,7 +879,7 @@ TOOL_SCHEMAS: List[Dict[str, Any]] = [
         "name": "git_branch",
         "description": "Manage git branches. No args → list. With name+flags → create/switch.",
         "parameters": {"type": "object",
-                       "properties": {"name": {"type": "string"},
+                       "properties": {"name":   {"type": "string"},
                                       "create": {"type": "boolean"},
                                       "switch": {"type": "boolean"}}}}},
 
@@ -1059,21 +914,29 @@ TOOL_SCHEMAS: List[Dict[str, Any]] = [
         "name": "plan_complete_step",
         "description": "Mark a plan step complete after verification.",
         "parameters": {"type": "object",
-                       "properties": {"step_id": {"type": "string",
-                                                   "description": "Step ID from the plan (e.g. 'step_1')"},
+                       "properties": {"step_id": {"type": "string"},
                                       "verification_notes": {"type": "string"}},
                        "required": ["step_id"]}}},
 
+    # ── Delegation ────────────────────────────────────────────────────────────
+    # 'task' kept for backward compat — routes to BCA internally.
+    # Prefer 'delegate' for new usage.
     {"type": "function", "function": {
         "name": "task",
-        "description": "Delegate file creation to an isolated sub-agent.",
+        "description": (
+            "Delegate single-file creation to an isolated sub-agent (backward-compat). "
+            "Prefer 'delegate' for new delegation — it gives the sub-agent a full contract "
+            "and returns structured results."
+        ),
         "parameters": {"type": "object",
-                       "properties": {"task_type": {"type": "string",
-                                                     "description": "File type (html, css, js, python, etc.)"},
-                                      "instructions": {"type": "string",
-                                                       "description": "Full specification for the file"},
-                                      "file_path": {"type": "string",
-                                                    "description": "Where to save the file"}},
+                       "properties": {
+                           "task_type":    {"type": "string",
+                                           "description": "File type (html, css, js, python, etc.)"},
+                           "instructions": {"type": "string",
+                                           "description": "Full specification for the file"},
+                           "file_path":    {"type": "string",
+                                           "description": "Where to save the file"},
+                       },
                        "required": ["task_type", "instructions", "file_path"]}}},
 
     {"type": "function", "function": {
@@ -1100,30 +963,20 @@ TOOL_SCHEMAS: List[Dict[str, Any]] = [
         "description": "Reconcile after rename/move operations. Re-enumerate from disk.",
         "parameters": {"type": "object", "properties": {}}}},
 
-    # ── vision (conditionally included by get_available_tools) ───────────────
+    # ── Vision (conditionally included by get_available_tools) ────────────────
     {"type": "function", "function": {
         "name": "vision",
         "description": (
-            "Read and analyse an image file from the workspace using the loaded "
-            "vision model. Use this whenever the task involves an image, screenshot, "
-            "diagram, chart, photo, or other visual file. Pass the workspace-relative "
-            "path and an optional specific question about the image. "
+            "Read and analyse an image file from the workspace using the loaded vision model. "
             "Only available when a vision-capable model (VLM) is loaded in LM Studio."
         ),
         "parameters": {
             "type": "object",
             "properties": {
-                "path": {
-                    "type": "string",
-                    "description": "Workspace-relative path to the image file (jpg, png, gif, webp)",
-                },
-                "prompt": {
-                    "type": "string",
-                    "description": (
-                        "What to ask about the image. "
-                        "Default: 'Describe this image in detail.'"
-                    ),
-                },
+                "path":   {"type": "string",
+                           "description": "Workspace-relative path to the image (jpg, png, gif, webp)"},
+                "prompt": {"type": "string",
+                           "description": "What to ask about the image."},
             },
             "required": ["path"],
         }}},
@@ -1149,7 +1002,11 @@ TOOL_HANDLERS: Dict[str, Callable] = {
     "todo_update":        tool_todo_update,
     "todo_list":          tool_todo_list,
     "plan_complete_step": tool_plan_complete_step,
-    "task":               tool_task,
+    # delegation — old compat + BCA
+    "task":               tool_task,           # backward-compat wrapper → tool_task_bca
+    "delegate":           tool_delegate,       # BCA: single focused sub-agent
+    "decompose":          tool_decompose,      # BCA: sequential multi-task decomposition
+    "report_result":      tool_report_result,  # BCA: sub-agent completion signal
     "task_state_update":  tool_task_state_update,
     "task_state_get":     tool_task_state_get,
     "task_reconcile":     tool_task_reconcile,
@@ -1157,19 +1014,18 @@ TOOL_HANDLERS: Dict[str, Callable] = {
     "vision":             tool_vision,
 }
 
-# Tools that always require non-empty arguments — used by _parse_stream in agent_llm.
 _REQUIRED_ARG_TOOLS = frozenset({
     "shell",
     "write", "read", "edit", "glob", "grep", "ls", "mkdir",
     "todo_add", "todo_complete", "todo_update", "plan_complete_step",
     "git_add", "git_commit", "git_branch", "git_diff",
-    "task",
+    "task", "delegate", "decompose", "report_result",
     "vision",
 })
 
 
 # =============================================================================
-# DYNAMIC TOOL LIST  ← use this everywhere instead of TOOL_SCHEMAS directly
+# DYNAMIC TOOL LIST
 # =============================================================================
 
 def get_available_tools(
@@ -1177,18 +1033,8 @@ def get_available_tools(
 ) -> List[Dict[str, Any]]:
     """Return the tool list to pass to LLMClient.call() for the current session.
 
-    The "vision" tool is included only when _detect_vision_support() returns True.
-
-    Args:
-        extra_schemas: Additional tool schemas to merge in (e.g. from MCP servers).
-                       Extra schemas are deduplicated by name; extras win on collision.
-
-    Usage:
-        available_tools = get_available_tools(extra_schemas=mcp_manager.get_all_tools())
-
-        # Force a fresh vision probe after user switches models:
-        vision_cache_invalidate()
-        available_tools = get_available_tools(...)
+    Injects BCA tools (delegate, decompose, report_result) for the root agent
+    (depth=0). Vision is included only when a VLM is detected.
     """
     has_vision = _detect_vision_support()
 
@@ -1197,36 +1043,27 @@ def get_available_tools(
         if t["function"]["name"] != "vision" or has_vision
     ]
 
+    # BCA tools for root agent (depth=0 → all BCA tools available)
+    bca_schemas = _get_bca_tool_schemas(depth=0, max_depth=MAX_DEPTH)
+    existing    = {t["function"]["name"] for t in tools}
+    for schema in bca_schemas:
+        name = schema["function"]["name"]
+        if name not in existing:
+            tools.append(schema)
+            existing.add(name)
+
     if extra_schemas:
-        existing_names = {t["function"]["name"] for t in tools}
         for schema in extra_schemas:
             name = (schema.get("function") or {}).get("name", "")
-            if name and name not in existing_names:
+            if name and name not in existing:
                 tools.append(schema)
-                existing_names.add(name)
+                existing.add(name)
 
     return tools
 
 
 # =============================================================================
 # BACKWARD-COMPAT RE-EXPORTS
-#
-# Everything that lived in agent_tools.py before the split is still importable
-# from agent_tools.  External files need zero changes.
-#
-# HOW THE CIRCULAR IMPORT IS AVOIDED:
-#   1. Python starts loading agent_tools (this file).
-#   2. All tool handlers, TOOL_SCHEMAS, TOOL_HANDLERS, get_available_tools
-#      are fully defined above this point.
-#   3. This block triggers agent_llm to load.
-#   4. agent_llm does `from agent_tools import ...` — Python finds agent_tools
-#      already in sys.modules (partially loaded) but with everything it needs
-#      already defined (steps 1-2 above).  Import succeeds.
-#   5. agent_llm finishes loading.
-#   6. The names below are bound in this module's namespace.
-#
-# tool_task uses a *call-time* lazy import of run_sub_agent/SUB_AGENT_SYSTEM_PROMPT
-# so there is no module-level cycle from that direction either.
 # =============================================================================
 
 from agent_llm import (  # noqa: E402, F401
