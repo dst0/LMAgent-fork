@@ -135,7 +135,7 @@ class Config:
     LLM_RETRY_DELAY = float(os.getenv("LLM_RETRY_DELAY", "3.0"))
     LLM_TIMEOUT     = int(os.getenv("LLM_TIMEOUT",       "560"))
     # Context
-    SUMMARIZATION_THRESHOLD = int(os.getenv("SUMMARIZATION_THRESHOLD", "110000"))
+    SUMMARIZATION_THRESHOLD = int(os.getenv("SUMMARIZATION_THRESHOLD", "40000"))
     KEEP_RECENT_MESSAGES    = int(os.getenv("KEEP_RECENT_MESSAGES",    "30"))
     # Workspace
     WORKSPACE            = os.getenv("WORKSPACE", str(Path.home() / "lm_workspace"))
