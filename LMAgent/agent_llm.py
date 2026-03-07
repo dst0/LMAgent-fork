@@ -7,6 +7,14 @@ in agent_bca.py. run_sub_agent() is kept for backward-compat re-exports
 but is no longer called by the delegation tools — those use _run_bca_agent
 directly. SUB_AGENT_SYSTEM_PROMPT is kept for any external code that
 imports it; BCA builds its own prompts via build_sub_agent_system_prompt().
+
+v2.1 fixes:
+  [BUG3] detect_completion: removed unreachable duplicate TASK_COMPLETE scan block.
+  [BUG4] detect_completion: removed arbitrary 50-char content threshold that caused
+         short "done" replies (e.g. "All finished.") to fall through to "Not complete"
+         and loop instead of closing the session.
+  [BUG5] SYSTEM_PROMPT: reworded PRIME DIRECTIVE to stop presenting tool-calling as
+         an equal alternative to completing — models defaulted to "do more" over "stop".
 """
 
 import json
@@ -39,10 +47,7 @@ from agent_tools import (
 
 _llm_local = threading.local()
 
-# Sub-agent tool allowlist for backward-compat run_sub_agent().
-# BCA agents use depth-scoped tool lists from agent_bca.get_depth_scoped_tools().
 _SUB_AGENT_TOOL_NAMES = frozenset({"write", "read", "edit", "ls", "glob", "grep", "shell"})
-
 _PLAN_TOOL_NAMES = frozenset({"ls", "read", "glob", "grep", "git_status"})
 
 
@@ -50,12 +55,20 @@ _PLAN_TOOL_NAMES = frozenset({"ls", "read", "glob", "grep", "git_status"})
 # SYSTEM PROMPTS
 # =============================================================================
 
+# BUG5 FIX: Reworded PRIME DIRECTIVE.
+# Old: "Call a tool every iteration, or output TASK_COMPLETE. Nothing else is valid output."
+# Problem: models read this as "calling a tool is always a valid default" and kept
+# calling tools even when work was done, because "or TASK_COMPLETE" felt optional.
+# New: TASK_COMPLETE is framed as the primary obligation; tool calls are only valid
+# when there is genuinely remaining work. This shifts the model's default toward stopping.
 SYSTEM_PROMPT = """You are a skilled, proactive digital coworker with real tools that make real changes.
 
 {soul_section}
 
 ## PRIME DIRECTIVE
-Call a tool every iteration, or output TASK_COMPLETE. Nothing else is valid output.
+When the task is done, output TASK_COMPLETE immediately. That is your primary obligation.
+Only call a tool if there is specific remaining work that requires it.
+Responding with text only (no tools, no TASK_COMPLETE) is never valid — it will trigger a forced stop.
 
 ---
 
@@ -573,32 +586,51 @@ class LLMClient:
 # COMPLETION DETECTION
 # =============================================================================
 
+# BUG3 FIX: removed the second unreachable `if not has_tool_calls and len(...) > 50`
+# block that re-scanned for TASK_COMPLETE. It could never be reached because the
+# first `if "TASK_COMPLETE" in content.upper()` block always returned first.
+#
+# BUG4 FIX: removed the `len(content.strip()) > 50` guard on the "Answer without
+# tools" branch. The old code caused the LLM to loop when it replied with short
+# completion signals like "Done." or "All files written." — those fell through to
+# `return False, "Not complete"` and the loop continued pointlessly.
+# The new threshold is 10 chars, which filters only truly empty/noise responses
+# while catching all real short-form completions.
+
 _SKIP_PREFIXES = ("#", "//", "/*", "*", "--", "<!--", "'")
 _SKIP_KEYWORDS = ("print(", "return ", "def ", "class ")
 _ASKING_PHRASES = ("would you like", "what would you", "should i")
 
+# Minimum content length to treat a text-only reply as a completion signal.
+# 10 chars rules out whitespace/punctuation noise while catching "Done.", "All done.", etc.
+_MIN_COMPLETION_CHARS = 10
+
 
 def detect_completion(content: str, has_tool_calls: bool) -> Tuple[bool, str]:
+    # ── Explicit TASK_COMPLETE anywhere in the content ────────────────────────
     if "TASK_COMPLETE" in content.upper():
         for line in content.split("\n"):
-            if "TASK_COMPLETE" not in line.upper(): continue
+            if "TASK_COMPLETE" not in line.upper():
+                continue
             stripped = line.strip()
-            if any(stripped.startswith(p) for p in _SKIP_PREFIXES): continue
-            if any(k in stripped.lower() for k in _SKIP_KEYWORDS): continue
+            if any(stripped.startswith(p) for p in _SKIP_PREFIXES):
+                continue
+            if any(k in stripped.lower() for k in _SKIP_KEYWORDS):
+                continue
             if has_tool_calls:
                 Log.info("TASK_COMPLETE with tool calls — treating as complete")
             return True, "Explicit TASK_COMPLETE"
-    if not has_tool_calls and len(content.strip()) > 50:
-        for line in content.split("\n"):
-            if "TASK_COMPLETE" not in line.upper(): continue
-            stripped = line.strip()
-            if any(stripped.startswith(p) for p in _SKIP_PREFIXES): continue
-            if any(k in stripped.lower() for k in _SKIP_KEYWORDS): continue
-            return True, "Explicit TASK_COMPLETE"
-    if not has_tool_calls and len(content.strip()) > 50:
+
+    # ── Text-only reply (no tool calls) ───────────────────────────────────────
+    # BUG4 FIX: threshold lowered from 50 → _MIN_COMPLETION_CHARS (10).
+    # This means "Done." / "All finished." / "File written." all correctly
+    # close the session instead of looping.
+    if not has_tool_calls and len(content.strip()) >= _MIN_COMPLETION_CHARS:
+        # If the LLM is asking a question, don't treat it as completion
         if any(q in content.lower() for q in _ASKING_PHRASES):
             return False, "Asking for input"
         return True, "Answer without tools"
+
     return False, "Not complete"
 
 
@@ -628,9 +660,6 @@ def ask_permission(tool_name: str, args: Dict[str, Any]) -> Tuple[bool, Optional
 
 # =============================================================================
 # BACKWARD-COMPAT: run_sub_agent
-#
-# Still exported so external code that imports it doesn't break.
-# New code should use tool_delegate or tool_decompose (via agent_bca).
 # =============================================================================
 
 def run_sub_agent(
@@ -922,7 +951,6 @@ def _process_tool_calls(
             emit("tool_result", {"name": fn_name, "success": True,
                                   "summary": str(result)[:200]})
 
-            # BCA: when delegate or decompose completes, emit a clean summary
             if fn_name in ("delegate", "decompose", "task") and result.get("status") == "ok":
                 summary   = result.get("summary", "")
                 artifacts = result.get("artifacts", [])
@@ -951,7 +979,6 @@ def _process_tool_calls(
             emit("tool_result", {"name": fn_name, "success": False,
                                   "error": result.get("error", "")[:200]})
 
-            # BCA: surface blocked sub-agent errors clearly
             if fn_name in ("delegate", "decompose", "task"):
                 error = result.get("error", result.get("summary", "Sub-agent failed"))
                 emit("warning", {"message": f"Sub-agent blocked/failed: {error[:120]}"})
