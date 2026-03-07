@@ -2,6 +2,9 @@
 """
 agent_main.py — Main entrypoint for LMAgent.
 FIXES: [1] truncation key mismatch, [2/3] double retry loop, [4] .env injection, [5] dead _hold_lock param, [6] module attr patching, [7] unreachable None guard, [8] _running_lock scope, [9] soul loaded twice, [10] scheduler stdout bleed, [11] scheduler UX headers, [12] scheduler output mode, [13] scheduler worker never updated current_session_id so follow-up messages always started a fresh session instead of continuing.
+v2.2: verify_and_collect_artifacts runs before cleanup so misplaced sub-agent deliverables are recovered to workspace root before agent dirs are removed.
+v2.3: [BUG1] empty-reply loop now injects a nudge message instead of silently counting to 5.
+      [BUG2] post-tool stall now injects a completion-pressure message after 2 content-only iterations.
 """
 
 import argparse
@@ -279,9 +282,6 @@ def run_scheduler(
     workspace: Path,
     poll_interval: Optional[int] = None,
     soul: str = "",
-    # FIX [13]: called with the completed session_id after each worker finishes
-    # so the REPL's current_session_id stays in sync and follow-up messages
-    # resume the same session instead of starting a fresh one.
     session_callback: Optional[Callable[[str], None]] = None,
 ) -> None:
     _running_lock: threading.Lock = threading.Lock()
@@ -350,8 +350,6 @@ def run_scheduler(
                     sys.stdout.write(colored(f"  {preview}", Colors.CYAN) + "\n")
                 sys.stdout.flush()
 
-            # FIX [13]: tell the REPL which session just finished so the next
-            # user message continues it rather than starting from scratch.
             if session_callback and result.status == "completed":
                 session_callback(result.session_id)
 
@@ -484,6 +482,37 @@ def run_scheduler(
                 break
             time.sleep(0.5)
         Log.info("[scheduler] exited.")
+
+
+# =============================================================================
+# ARTIFACT COLLECTION HELPER
+# =============================================================================
+
+def _collect_artifacts_from_messages(messages: List[Dict[str, Any]]) -> List[str]:
+    """
+    Walk the completed message list and collect every artifact path reported
+    by delegate or decompose tool calls. Returns a deduplicated list preserving
+    first-seen order.
+    """
+    seen:      set        = set()
+    artifacts: List[str] = []
+
+    for msg in messages:
+        if msg.get("role") != "tool":
+            continue
+        if msg.get("name") not in ("delegate", "decompose"):
+            continue
+        try:
+            result = json.loads(msg.get("content", "{}"))
+            for art in result.get("artifacts", []):
+                art_norm = art.replace("\\", "/")
+                if art_norm and art_norm not in seen:
+                    seen.add(art_norm)
+                    artifacts.append(art_norm)
+        except Exception:
+            pass
+
+    return artifacts
 
 
 # =============================================================================
@@ -639,23 +668,23 @@ def run_agent(
     plan_mgr       = PlanManager(workspace, session_id)
     task_state_mgr = TaskStateManager(workspace, session_id)
 
-    # ── BCA + tool context — always paired, always together ──────────────────
-    # set_tool_context must come first (BCA reads from it immediately after).
     set_tool_context(workspace, session_id, todo_mgr, plan_mgr, task_state_mgr,
                      messages, mode=mode, stream_callback=_base_stream_cb)
 
-    # initialize_root_agent gives the root agent a proper BCA brief so that
-    # delegate/decompose work identically from root and sub-agents.
-    # This is the ONLY change needed in this file vs the previous version.
-    from agent_bca import initialize_root_agent, cleanup_session_dirs
-    initialize_root_agent(
+    from agent_bca import (
+        initialize_root_agent,
+        cleanup_session_dirs,
+        verify_and_collect_artifacts,
+        get_current_brief,
+        get_brief_manager,
+    )
+    root_brief = initialize_root_agent(
         workspace=workspace,
         session_id=session_id,
         task=task,
         messages=messages,
         stream_callback=_base_stream_cb,
     )
-    # ─────────────────────────────────────────────────────────────────────────
 
     if resume_session:
         loaded = task_state_mgr.load()
@@ -672,6 +701,9 @@ def run_agent(
     available_tools = get_available_tools(extra_schemas=mcp_tools)
 
     current_permission_mode = permission_mode
+
+    # BUG2 fix: track consecutive content-only (no tool calls, not complete) iterations
+    _stall_count = 0
 
     def _save_state(wait_state: Optional[WaitState] = None) -> None:
         state_mgr.save(session_id, AgentState(
@@ -764,9 +796,30 @@ def run_agent(
             content    = response.get("content", "")
             tool_calls = response.get("tool_calls") or []
 
+            # ── BUG1 FIX: empty reply nudge ───────────────────────────────────
+            # Previously: silently incremented counter and continued, giving the
+            # LLM identical context next iteration → guaranteed empty loop to limit.
+            # Now: inject a user message so the LLM knows it sent nothing and must
+            # either use a tool or declare completion.
             if not content and not tool_calls:
                 detector.track_empty()
+                empty_count = detector.empty_iterations
+                emit("warning", {"message": f"Empty reply #{empty_count} — injecting nudge"})
+                if empty_count >= 2:
+                    messages.append({
+                        "role": "user",
+                        "content": (
+                            f"Your last {empty_count} responses were empty — no content and no tool calls. "
+                            "This is not valid.\n\n"
+                            "You must do one of:\n"
+                            "1. Call a tool to continue working\n"
+                            "2. Output TASK_COMPLETE if the task is finished\n"
+                            "3. Output BLOCKED: <reason> if you cannot proceed\n\n"
+                            "Do not send an empty response again."
+                        ),
+                    })
                 continue
+            # ── end BUG1 FIX ──────────────────────────────────────────────────
 
             if content:
                 final_answer = content
@@ -818,6 +871,7 @@ def run_agent(
             had_truncation = any(tc.get("_truncated") for tc in tool_calls)
             if had_truncation:
                 emit("warning", {"message": "Truncated tool call — skipping completion check, forcing retry"})
+                _stall_count = 0
                 continue
 
             is_complete, reason = detect_completion(content, bool(tool_calls))
@@ -849,6 +903,7 @@ def run_agent(
                 is_complete, reason = True, "Plan completed"
 
             if is_complete:
+                _stall_count = 0
                 emit("complete", {"reason": reason, "answer": final_answer})
                 _save_session("idle")
                 task_state_mgr.clear()
@@ -862,6 +917,34 @@ def run_agent(
                     status="completed", final_answer=final_answer,
                     events=events, session_id=session_id, iterations=iteration,
                 )
+
+            # ── BUG2 FIX: post-tool stall nudge ──────────────────────────────
+            # Previously: after tool calls completed the loop just went back
+            # around with no message, letting the LLM call more tools indefinitely
+            # until the streak/no-progress detector fired at 8-15 iterations.
+            # Now: track consecutive content-only (no tools, not complete) iters
+            # and inject a direct completion-pressure message after 2 in a row.
+            # Reset the counter whenever tools are used or completion fires.
+            if content and not tool_calls and not is_complete and not had_truncation:
+                _stall_count += 1
+                if _stall_count >= 2:
+                    emit("warning", {"message": f"Stall #{_stall_count} — injecting completion pressure"})
+                    messages.append({
+                        "role": "user",
+                        "content": (
+                            "You have responded with text but no tool calls multiple times. "
+                            "This usually means the work is done.\n\n"
+                            "Check: does the deliverable exist and is it correct?\n"
+                            "→ Yes → output TASK_COMPLETE right now\n"
+                            "→ No  → call a tool to fix it\n"
+                            "→ Blocked → output BLOCKED: <reason>\n\n"
+                            "Do not respond with text only again."
+                        ),
+                    })
+            else:
+                # Tool calls were made or task completed — reset stall counter
+                _stall_count = 0
+            # ── end BUG2 FIX ──────────────────────────────────────────────────
 
             if Config.AUTO_SAVE_SESSION and iteration % 5 == 0:
                 _save_session("active")
@@ -891,13 +974,37 @@ def run_agent(
     finally:
         mcp_manager.close_all()
         close_shell_session()
-        # Clean up BCA agent directories created during this session.
-        # Keeps the workspace tidy — safe to remove, nothing here is needed
-        # after the agent finishes. Remove this line if you want to inspect
-        # brief.json / result.json after a run for debugging.
+
+        try:
+            claimed = _collect_artifacts_from_messages(messages)
+            if claimed:
+                current_brief = get_current_brief()
+                bm            = get_brief_manager()
+                if current_brief and bm:
+                    verification = verify_and_collect_artifacts(
+                        workspace=workspace,
+                        expected_artifacts=list(dict.fromkeys(claimed)),
+                        brief=current_brief,
+                        bm=bm,
+                    )
+                    if verification["missing"]:
+                        Log.warning(
+                            f"[BCA] {len(verification['missing'])} artifact(s) could not be "
+                            f"located anywhere: {verification['missing']}"
+                        )
+                    if verification["misplaced"]:
+                        Log.success(
+                            f"[BCA] Recovered {len(verification['misplaced'])} misplaced "
+                            f"artifact(s) to workspace root: {verification['misplaced']}"
+                        )
+        except Exception as _verify_err:
+            Log.warning(f"[BCA] artifact verification failed (non-fatal): {_verify_err}")
+
         cleanup_session_dirs(workspace)
+
         if mode == "output":
             Log.set_silent(False)
+
 
 # =============================================================================
 # BANNER
@@ -1082,8 +1189,6 @@ def main() -> int:
 
     _repl_prompt_fn = _reprint_prompt
 
-    # FIX [13]: when a scheduler worker completes, update current_session_id
-    # so the next REPL input resumes that session instead of starting fresh.
     def _on_scheduler_session(sid: str) -> None:
         nonlocal current_session_id
         current_session_id = sid
@@ -1098,7 +1203,7 @@ def main() -> int:
         kwargs={
             "poll_interval":    args.scheduler_interval or Config.SCHEDULER_POLL_INTERVAL,
             "soul":             soul,
-            "session_callback": _on_scheduler_session,  # FIX [13]
+            "session_callback": _on_scheduler_session,
         },
         daemon=True,
         name="scheduler",
