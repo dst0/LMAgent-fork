@@ -15,7 +15,7 @@
     <img src="https://img.youtube.com/vi/-_jKwfssAvA/hqdefault.jpg" alt="Watch the demo">
   </a>
 </p>
-
+*UI UPDATED NEW DEMO COMING SOON*
 ---
 
 
