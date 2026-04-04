@@ -423,7 +423,7 @@ _chat_log_lock: threading.Lock = threading.Lock()
 _NO_SESSION_KEY = "_none_"
 _REPLAY_KINDS   = frozenset({
     "token", "thinking", "tool", "status",
-    "iteration", "done", "error", "session",
+    "iteration", "done", "error", "session", "plan",
 })
 
 
@@ -868,6 +868,11 @@ def _push_event(event, stop_event, last_status: list, flush_thinking=None) -> No
     elif etype == "waiting":
         _broadcast(("status", f"waiting until {edata.get('resume_after')}"))
 
+    elif etype == "plan":
+        if flush_thinking:
+            flush_thinking()
+        _broadcast(("plan", edata.get("plan", {})))
+
     elif etype == "complete":
         _broadcast(("status", f"done — {edata.get('reason', '')}"))
 
@@ -926,7 +931,7 @@ def _execute_agent(message, session_id, request_id, stop_ev,
             message, WORKSPACE,
             permission_mode=permission_mode,
             resume_session=session_id,
-            plan_first=False,
+            plan_first=True,
             mode="output",
             event_callback=ev_cb,
             soul=soul,

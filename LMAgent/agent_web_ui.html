@@ -150,6 +150,31 @@ header{
 .msg.sys.info .msg-body{border-left-color:var(--purple);color:var(--text2);font-style:normal;font-size:11.5px}
 .msg.sys.platform .msg-body{border-left-color:var(--teal-dim);color:var(--teal);font-style:normal}
 
+/* Plan card */
+.plan-card{
+  background:var(--surface);border:1px solid var(--border2);border-radius:var(--r);
+  padding:12px 14px;margin:4px 0;font-family:var(--sans);
+}
+.plan-card-header{display:flex;align-items:baseline;gap:8px;margin-bottom:4px;cursor:pointer;user-select:none}
+.plan-card-icon{font-size:13px;flex-shrink:0;margin-top:1px}
+.plan-card-title{font-size:13px;font-weight:600;color:var(--text);flex:1}
+.plan-card-arrow{font-size:8px;color:var(--text3);transition:transform .15s;flex-shrink:0}
+.plan-card.open .plan-card-arrow{transform:rotate(90deg)}
+.plan-card-body{display:none}
+.plan-card.open .plan-card-body{display:block}
+.plan-card-goal{font-size:11.5px;color:var(--text2);margin:6px 0 10px;line-height:1.55;font-style:italic}
+.plan-steps{list-style:none;padding:0;margin:0;display:flex;flex-direction:column;gap:5px}
+.plan-step{
+  background:var(--surface2);border:1px solid var(--border);border-radius:5px;
+  padding:7px 10px;
+}
+.plan-step.risk-high{border-left:2px solid var(--red)}
+.plan-step.risk-med{border-left:2px solid var(--amber)}
+.plan-step-num{font-size:9px;color:var(--text3);font-family:var(--mono);letter-spacing:.05em;margin-bottom:2px}
+.plan-step-desc{font-size:12px;color:var(--text);line-height:1.5;display:block}
+.plan-step-verify{font-size:10.5px;color:var(--text3);font-family:var(--mono);margin-top:3px;display:block;font-style:italic}
+.plan-risks{margin-top:8px;font-size:10.5px;color:var(--text3);font-family:var(--mono);font-style:italic;line-height:1.6}
+
 /* Image in user message */
 .msg-img{max-width:200px;max-height:150px;border-radius:var(--r);border:1px solid var(--border2);margin-top:6px;display:block;object-fit:cover}
 
@@ -624,6 +649,50 @@ const _TOKEN = '__AGENT_TOKEN__';
 var MAX_ARGS_DISPLAY_LENGTH = 50;
 function _esc(s){ return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;'); }
 
+function _makePlanBlock(plan){
+  var card = document.createElement('div'); card.className = 'plan-card open';
+  var hdr  = document.createElement('div'); hdr.className  = 'plan-card-header';
+  hdr.setAttribute('tabindex', '0'); hdr.setAttribute('role', 'button'); hdr.setAttribute('aria-expanded', 'true');
+  var icon = document.createElement('span'); icon.className = 'plan-card-icon'; icon.textContent = '📋';
+  icon.setAttribute('aria-hidden', 'true');
+  var ttl  = document.createElement('span'); ttl.className  = 'plan-card-title'; ttl.textContent = plan.title || 'Execution Plan';
+  var arr  = document.createElement('span'); arr.className  = 'plan-card-arrow'; arr.textContent = '▾';
+  hdr.appendChild(icon); hdr.appendChild(ttl); hdr.appendChild(arr);
+  card.appendChild(hdr);
+  var body = document.createElement('div'); body.className = 'plan-card-body';
+  if(plan.goal){
+    var goal = document.createElement('div'); goal.className = 'plan-card-goal'; goal.textContent = plan.goal;
+    body.appendChild(goal);
+  }
+  var steps = plan.steps || [];
+  if(steps.length){
+    var ul = document.createElement('ul'); ul.className = 'plan-steps';
+    steps.forEach(function(s, i){
+      var li  = document.createElement('li');
+      li.className = ['plan-step', s.risk === 'high' ? 'risk-high' : s.risk === 'medium' ? 'risk-med' : ''].filter(Boolean).join(' ');
+      var num = document.createElement('span'); num.className = 'plan-step-num'; num.textContent = 'step ' + (i + 1);
+      var desc = document.createElement('span'); desc.className = 'plan-step-desc'; desc.textContent = s.description || '';
+      li.appendChild(num); li.appendChild(desc);
+      if(s.verification){
+        var ver = document.createElement('span'); ver.className = 'plan-step-verify'; ver.textContent = '✓ ' + s.verification;
+        li.appendChild(ver);
+      }
+      ul.appendChild(li);
+    });
+    body.appendChild(ul);
+  }
+  var risks = plan.risk_areas || [];
+  if(risks.length){
+    var risksEl = document.createElement('div'); risksEl.className = 'plan-risks'; risksEl.textContent = '⚠ ' + risks.join(' · ');
+    body.appendChild(risksEl);
+  }
+  card.appendChild(body);
+  function _toggle(){ var open = card.classList.toggle('open'); arr.textContent = open ? '▾' : '▶'; hdr.setAttribute('aria-expanded', String(open)); }
+  hdr.onclick = _toggle;
+  hdr.onkeydown = function(e){ if(e.key === 'Enter' || e.key === ' '){ e.preventDefault(); _toggle(); } };
+  return card;
+}
+
 function _makeThinkingBlock(text){
   var el = document.createElement('div'); el.className = 'thinking-block';
   var first = text.split('\n')[0].slice(0,120), multi = text.length > first.length || text.indexOf('\n') !== -1;
@@ -957,6 +1026,10 @@ const Replay = (function(){
       else if(kind === 'iteration'){ flushTok(); flushTools(); lastTok = false; var mm = String(payload).match(/(\d+)\/(\d+)/); if(mm) sysMsg('— iteration ' + mm[1] + '/' + mm[2] + ' —', 'info'); }
       else if(kind === 'done'){ flushTok(); flushTools(); lastTok = false; }
       else if(kind === 'error'){ flushTok(); flushTools(); lastTok = false; sysMsg('⚠ ' + payload, 'err'); }
+      else if(kind === 'plan'){
+        flushTok(); flushTools(); lastTok = false; hideEmpty();
+        pane.appendChild(_makePlanBlock(typeof payload === 'object' && payload !== null ? payload : {}));
+      }
     });
     flushTok(); flushTools();
   }
@@ -1198,6 +1271,12 @@ const Agent = (function(){
         Messages.sys('⚠ ' + evt.data, 'err');
         transition('idle'); Status.set('error', 'err'); Status.iter('');
         break;
+      case 'plan':{
+        Stream.finalize(); Tools.endGroup(); Messages.hideEmpty();
+        var pb = _makePlanBlock(typeof evt.data === 'object' && evt.data !== null ? evt.data : {});
+        Messages.pane().appendChild(pb); Scroll.maybe(); _hadContent = true;
+        break;
+      }
     }
   }
 
