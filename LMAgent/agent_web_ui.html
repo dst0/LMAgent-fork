@@ -621,7 +621,7 @@ const _TOKEN = '__AGENT_TOKEN__';
 // ─────────────────────────────────────────────────────────────────────────────
 // UTILITIES
 // ─────────────────────────────────────────────────────────────────────────────
-function _esc(s){ return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+function _esc(s){ return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;'); }
 
 function _makeThinkingBlock(text){
   var el = document.createElement('div'); el.className = 'thinking-block';
@@ -877,7 +877,8 @@ const Tools = (function(){
   function makeRow(name, args){
     var row = document.createElement('div'); row.className = 'tool-row'; row.dataset.s = 'pending';
     var pv = args ? (args.slice(0,50) + (args.length > 50 ? '…' : '')) : '';
-    row.innerHTML = '<span class="tr-icon">◌</span><span class="tr-name">' + _esc(name) + '</span>' + (pv ? '<span class="tr-args">(' + _esc(pv) + ')</span>' : '');
+    var titleAttr = args && args.length > 50 ? ' title="' + _esc(args) + '"' : '';
+    row.innerHTML = '<span class="tr-icon">◌</span><span class="tr-name">' + _esc(name) + '</span>' + (pv ? '<span class="tr-args"' + titleAttr + '>(' + _esc(pv) + ')</span>' : '');
     if(!pending.has(name)) pending.set(name, []);
     pending.get(name).push(row); return row;
   }
@@ -930,7 +931,8 @@ const Replay = (function(){
       toolItems.forEach(function(t){
         var row = document.createElement('div'); row.className = 'tool-row'; row.dataset.s = t.ok === null ? 'pending' : (t.ok ? 'ok' : 'fail');
         var pv = t.args ? (t.args.slice(0,50) + (t.args.length > 50 ? '…' : '')) : '';
-        row.innerHTML = '<span class="tr-icon">' + (t.ok === null ? '◌' : (t.ok ? '✓' : '✗')) + '</span><span class="tr-name">' + _esc(t.name) + '</span>' + (pv ? '<span class="tr-args">(' + _esc(pv) + ')</span>' : '');
+        var titleAttr = t.args && t.args.length > 50 ? ' title="' + _esc(t.args) + '"' : '';
+        row.innerHTML = '<span class="tr-icon">' + (t.ok === null ? '◌' : (t.ok ? '✓' : '✗')) + '</span><span class="tr-name">' + _esc(t.name) + '</span>' + (pv ? '<span class="tr-args"' + titleAttr + '>(' + _esc(pv) + ')</span>' : '');
         g.appendChild(row);
       });
       _finaliseToolGroup(g, toolItems.length); pane.appendChild(g); toolItems = [];
