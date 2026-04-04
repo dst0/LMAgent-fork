@@ -635,6 +635,7 @@ def run_agent(
                         return AgentResult(status="cancelled", final_answer="Plan not approved.",
                                            events=events, session_id="", iterations=0)
                     Log.plan("Plan approved — starting execution")
+                emit("plan", {"plan": plan_data})
                 emit("log", {"message": "Plan approved"})
 
         session_id = session_mgr.create(task)
