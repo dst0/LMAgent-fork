@@ -368,6 +368,13 @@ def _resolve_permission_mode() -> PermissionMode:
 # SSE BROADCAST / STREAM QUEUES
 # =============================================================================
 
+# Matches ANSI/VT escape sequences so they are stripped before tokens reach the
+# browser.  Three alternation branches cover:
+#   \[[0-9;]*[A-Za-z]  – CSI sequences (e.g. colour codes \x1b[31m, cursor moves)
+#   [^[]               – non-CSI single-char escape sequences (e.g. \x1b=, \x1bM)
+#   $                  – lone ESC at end of string (incomplete/trailing sequence)
+_ANSI_ESCAPE = re.compile(r'\x1b(?:\[[0-9;]*[A-Za-z]|[^[]|$)')
+
 _stream_queues:      list           = []
 _stream_queues_lock: threading.Lock = threading.Lock()
 
@@ -899,7 +906,7 @@ def _execute_agent(message, session_id, request_id, stop_ev,
     def token_cb(tok: str) -> None:
         if stop_ev.is_set():
             raise _AgentStopped()
-        _broadcast(("token", tok))
+        _broadcast(("token", _ANSI_ESCAPE.sub('', tok)))
 
     _tl.token_cb = token_cb
 
