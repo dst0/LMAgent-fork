@@ -1,6 +1,7 @@
 import sys
 import types
 import unittest
+from pathlib import Path
 
 
 if "agent_core" not in sys.modules:
@@ -46,7 +47,7 @@ if "agent_tools" not in sys.modules:
     stub.set_tool_context = lambda *args, **kwargs: None
     sys.modules["agent_tools"] = stub
 
-sys.path.insert(0, "/home/runner/work/LMAgent-fork/LMAgent-fork/LMAgent")
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "LMAgent"))
 
 from agent_llm import LLMClient, _prepare_messages_for_payload
 

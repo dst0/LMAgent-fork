@@ -386,11 +386,12 @@ def _prepare_messages_for_payload(messages: List[Dict[str, Any]]) -> List[Dict[s
 
     if insert_pos < len(messages):
         first_non_system = messages[insert_pos]
+        first_non_system_content = str(first_non_system.get("content", "")).strip()
         if (first_non_system.get("role") == "user"
-                and str(first_non_system.get("content", "")).strip() == active_request):
+                and first_non_system_content == active_request):
             return messages
         if (first_non_system.get("role") == "user"
-                and str(first_non_system.get("content", "")).strip().startswith(_ACTIVE_USER_REQUEST_TAG)):
+                and first_non_system_content.startswith(_ACTIVE_USER_REQUEST_TAG)):
             return messages
 
     prepared = list(messages)
