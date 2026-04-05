@@ -1298,15 +1298,21 @@ class SessionManager:
         pending = sum(1 for t in todos if t.get("status") == "pending")
         if not total:
             return None
+        if completed == total:
+            status = "completed"
+        elif blocked and not pending and not in_progress:
+            status = "blocked"
+        elif in_progress:
+            status = "active"
+        else:
+            status = "pending"
         return {
             "total": total,
             "completed": completed,
             "in_progress": in_progress,
             "pending": pending,
             "blocked": blocked,
-            "status": ("completed" if completed == total and total else
-                       "blocked" if blocked and not pending and not in_progress else
-                       "active" if in_progress else "pending"),
+            "status": status,
         }
 
     def _plan_summary(self, sid: str) -> Optional[Dict[str, Any]]:
@@ -1320,17 +1326,21 @@ class SessionManager:
             return None
         completed = sum(1 for s in steps if s.get("status") == "completed")
         in_progress = sum(1 for s in steps if s.get("status") == "in_progress")
+        status = plan.get("status")
+        if not status:
+            if total and completed == total:
+                status = "completed"
+            elif in_progress:
+                status = "active"
+            else:
+                status = "pending"
         return {
             "title": plan.get("title", ""),
             "total": total,
             "completed": completed,
             "in_progress": in_progress,
             "current_step_id": data.get("current_step_id"),
-            "status": plan.get("status") or (
-                "completed" if total and completed == total else
-                "active" if in_progress else
-                "pending"
-            ),
+            "status": status,
         }
 
     def _task_summary(self, sid: str) -> Optional[Dict[str, Any]]:
