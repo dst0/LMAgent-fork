@@ -22,6 +22,7 @@ import re
 import sys
 import threading
 import time
+import copy
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
@@ -404,6 +405,31 @@ class LLMClient:
                     stream=True, timeout=Config.LLM_TIMEOUT,
                 )
                 resp_text_lower = (resp.text or "").lower()
+                if resp.status_code == 400 and _NO_USER_QUERY_ERR in resp_text_lower:
+                    Log.warning(
+                        "Model template rejected tool-heavy history (no user query) — "
+                        "retrying with compatibility user anchor"
+                    )
+                    patched_payload = copy.deepcopy(payload)
+                    patched_payload["messages"] = list(payload.get("messages") or []) + [{
+                        "role": "user",
+                        "content": (
+                            "Continue from the latest state and tool results. "
+                            "If the task is done, output TASK_COMPLETE."
+                        ),
+                    }]
+                    resp = requests.post(
+                        Config.LLM_URL, json=patched_payload, headers=cls._headers(),
+                        stream=True, timeout=Config.LLM_TIMEOUT,
+                    )
+                    resp_text_lower = (resp.text or "").lower()
+                    if resp.status_code == 400 and _NO_USER_QUERY_ERR in resp_text_lower:
+                        return {
+                            "error": (
+                                "LLM template error: No user query found in messages "
+                                "(compatibility retry failed)."
+                            )
+                        }
                 if resp.status_code == 400 and "tool_choice" in resp_text_lower:
                     Log.warning("Model rejected tool_choice — disabling for this session")
                     cls._set_tool_choice_rejected(True)
@@ -418,7 +444,7 @@ class LLMClient:
                         "Model template rejected tool-heavy history (no user query) — "
                         "retrying with compatibility user anchor"
                     )
-                    patched_payload = dict(payload)
+                    patched_payload = copy.deepcopy(payload)
                     patched_payload["messages"] = list(payload.get("messages") or []) + [{
                         "role": "user",
                         "content": (
@@ -431,7 +457,12 @@ class LLMClient:
                         stream=True, timeout=Config.LLM_TIMEOUT,
                     )
                     if resp.status_code == 400 and _NO_USER_QUERY_ERR in (resp.text or "").lower():
-                        Log.error("Compatibility retry failed: backend still reports no user query")
+                        return {
+                            "error": (
+                                "LLM template error: No user query found in messages "
+                                "(compatibility retry failed)."
+                            )
+                        }
                 if resp.status_code in (500, 503):
                     Log.warning(f"LLM returned {resp.status_code} — waiting for recovery")
                     if cls._wait_for_server(60):
