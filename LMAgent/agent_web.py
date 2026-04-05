@@ -1263,8 +1263,7 @@ def _execute_agent(message, session_id, request_id, stop_ev,
                 _active_session_id = None
             _set_agent_state("idle")
         else:
-            words  = (result.final_answer or "").split()
-            reason = " ".join(words[:8]) + ("…" if len(words) > 8 else "")
+            reason = (result.final_answer or "").strip()
             _broadcast(("done", reason or result.status))
             with _session_lock:
                 _active_session_id = None
