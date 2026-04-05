@@ -1852,13 +1852,14 @@ const Messaging = (function(){
 // AGENT  ← uses Messaging.getMode() not Messaging._state.mode
 // ─────────────────────────────────────────────────────────────────────────────
 const Agent = (function(){
-  var state = 'idle', sessionId = null, requestId = null, _hadContent = false;
+  var state = 'idle', sessionId = null, activeSessionId = null, requestId = null, suppressLiveRender = false, _hadContent = false;
 
   function setSession(id){
     sessionId = id;
     var pill = document.getElementById('session-pill');
     if(id){ pill.textContent = id.slice(-8); pill.style.display = ''; } else pill.style.display = 'none';
   }
+  function setActiveSession(id){ activeSessionId = id || null; }
   function running(){ return state !== 'idle'; }
 
   function lockUI(on){
@@ -1894,6 +1895,8 @@ const Agent = (function(){
       var d = evt.data || {};
       if(d.session) setSession(d.session);
       if(d.mode) Status.mode(d.mode);
+      if(d.state === 'running' || d.state === 'waiting') setActiveSession(d.session || activeSessionId);
+      else setActiveSession(null);
       if(d.history && d.history.length && !document.getElementById('messages').querySelectorAll('.msg').length)
         Replay.run(d.history);
       if(d.state === 'running' && state === 'idle'){
@@ -1935,22 +1938,27 @@ const Agent = (function(){
 
     switch(evt.type){
       case 'token':
+        if(suppressLiveRender) break;
         Tools.endGroup(); if(!Stream.active()) Stream.start(); Stream.token(evt.data); _hadContent = true;
         LiveActivity.setActivity({kind:'token', message:'Streaming answer', icon:'✎'});
         break;
       case 'thinking_live':
+        if(suppressLiveRender) break;
         if(evt.data && evt.data.phase === 'start') ThinkingStream.start();
         else if(evt.data && evt.data.phase === 'delta') ThinkingStream.delta(evt.data.text || '');
         _hadContent = true;
         break;
       case 'thinking':
+        if(suppressLiveRender) break;
         Stream.finalize(); Tools.endGroup(); Messages.hideEmpty();
         ThinkingStream.finalize(evt.data); _hadContent = true;
         break;
       case 'session':
-        setSession(evt.data);
+        if(state !== 'idle') setActiveSession(evt.data);
+        if(!suppressLiveRender) setSession(evt.data);
         break;
       case 'tool':{
+        if(suppressLiveRender) break;
         var t = _toolEventInfo(evt.data);
         if(t.phase === 'result'){
           Tools.resolve(t.name, t.ok, t.outcome);
@@ -1977,6 +1985,7 @@ const Agent = (function(){
         LiveActivity.setAlert(evt.data || {});
         break;
       case 'iteration':{
+        if(suppressLiveRender) break;
         var mi = String(evt.data).match(/(\d+)\/(\d+)/);
         if(mi){
           Stream.finalize(); Tools.endGroup();
@@ -1987,16 +1996,34 @@ const Agent = (function(){
         break;
       }
       case 'done':
-      	  // If we already handled stop optimistically, ignore the late SSE echo
-       	 if(evt.data === 'stopped' && state === 'idle') break;
-           	_onDone(evt.data);
-                    break;
+        	  // If we already handled stop optimistically, ignore the late SSE echo
+        	 if(evt.data === 'stopped' && state === 'idle') break;
+            	if(suppressLiveRender){
+                  var isWait = String(evt.data || '').startsWith('waiting');
+                  ThinkingStream.finalize();
+                  Status.iter('');
+                  Messages.showProgress(false);
+                  transition(isWait ? 'waiting' : 'idle');
+                  Status.set(isWait ? 'waiting — will resume automatically' : (evt.data || 'done'), isWait ? 'wait' : 'done');
+                  if(!isWait){
+                    setActiveSession(null);
+                    requestId = null;
+                    suppressLiveRender = false;
+                  }
+                }else{
+            	  _onDone(evt.data);
+                }
+                     break;
       case 'error':
         Stream.finalize(); Tools.endGroup(); ThinkingStream.finalize();
-        Messages.sys('⚠ ' + evt.data, 'err');
+        if(!suppressLiveRender) Messages.sys('⚠ ' + evt.data, 'err');
+        setActiveSession(null);
+        requestId = null;
+        suppressLiveRender = false;
         transition('idle'); Status.set('error', 'err'); Status.iter('');
         break;
       case 'plan':{
+        if(suppressLiveRender) break;
         Stream.finalize(); Tools.endGroup(); Messages.hideEmpty();
         var pb = _makePlanBlock(typeof evt.data === 'object' && evt.data !== null ? evt.data : {});
         Messages.pane().appendChild(pb); Scroll.maybe(); _hadContent = true;
@@ -2018,6 +2045,8 @@ const Agent = (function(){
       else if(!isErr) Messages.sys('✓ ' + ((reason || '').replace(/\s*✓\s*$/, '').trim() || 'task finished'), 'ok');
       document.getElementById('msg-input').focus();
     }
+    if(!isWait){ setActiveSession(null); requestId = null; }
+    suppressLiveRender = false;
   }
 
   async function send(text){
@@ -2031,6 +2060,8 @@ const Agent = (function(){
     Scroll.pin(); transition('running'); Status.set('thinking…', 'run'); Tools.reset(); ThinkingStream.reset(); _hadContent = false; Messages.showProgress(true);
     LiveActivity.begin();
     requestId = 'r' + Date.now() + Math.random().toString(36).slice(2,6);
+    setActiveSession(sessionId);
+    suppressLiveRender = false;
     try{
       var resp = await fetch('/chat', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({message:fullText, session_id:sessionId, request_id:requestId})});
       if(!resp.ok){ var err = await resp.json().catch(function(){ return {error:'HTTP ' + resp.status}; }); throw new Error(err.error || 'HTTP ' + resp.status); }
@@ -2038,12 +2069,16 @@ const Agent = (function(){
       Stream.finalize(); Tools.endGroup(); ThinkingStream.reset();
       Messages.showProgress(false);
       Messages.sys('Failed to send: ' + err.message, 'err');
+      setActiveSession(null);
+      requestId = null;
+      suppressLiveRender = false;
       transition('idle'); Status.set('error', 'err'); Status.iter('');
     }
   }
 
- function stop(){
+  function stop(){
     if(state === 'waiting'){
+      setActiveSession(null); requestId = null; suppressLiveRender = false;
       transition('idle'); Status.set('wait dismissed — session saved','');
       Messages.sys('— wait dismissed (session saved) —', 'warn'); return;
     }
@@ -2053,6 +2088,8 @@ const Agent = (function(){
     Messages.showProgress(false);
     transition('idle'); Status.set('stopped — send a message to resume','');
     Status.iter(''); Messages.sys('— stopped (session saved — send a message to resume) —', 'warn');
+    setActiveSession(null);
+    suppressLiveRender = false;
     if(requestId){
       fetch('/stop', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({request_id:requestId})}).catch(function(){});
       requestId = null;
@@ -2062,7 +2099,7 @@ const Agent = (function(){
   async function newSession(){
     if(state !== 'idle'){ stop(); return; }
     try{ await fetch('/new', {method:'POST'}); }catch(_){}
-    sessionId = requestId = null; _hadContent = false; setSession(null);
+    sessionId = requestId = activeSessionId = null; suppressLiveRender = false; _hadContent = false; setSession(null);
     Tools.reset(); Stream.reset(); ImageUpload.clear();
     document.getElementById('messages').innerHTML = '<div id="replay-banner"></div><div id="empty"><div class="empty-glyph">λ_</div><p>Send a message to start working</p><div class="hint">/ commands &nbsp;·&nbsp; ↑↓ history &nbsp;·&nbsp; drag image</div></div>';
     Status.set('ready',''); Status.iter(''); document.getElementById('msg-input').focus();
@@ -2109,11 +2146,15 @@ const Agent = (function(){
   }
 
   function switchSession(id, events){
-    sessionId = id; requestId = null; _hadContent = false; setSession(id);
+    var keepLiveState = state !== 'idle';
+    sessionId = id; if(!keepLiveState) requestId = null; _hadContent = false; setSession(id);
+    suppressLiveRender = keepLiveState && (!!activeSessionId ? id !== activeSessionId : true);
     Tools.reset(); Stream.reset(); ImageUpload.clear();
     document.getElementById('messages').innerHTML = '<div id="replay-banner"></div><div id="empty"><div class="empty-glyph">λ_</div><p>Send a message to start working</p><div class="hint">/ commands &nbsp;·&nbsp; ↑↓ history &nbsp;·&nbsp; drag image</div></div>';
-    Status.set('ready',''); Status.iter('');
-    LiveActivity.reset();
+    if(!keepLiveState){
+      Status.set('ready',''); Status.iter('');
+      LiveActivity.reset();
+    }
     if(events && events.length) Replay.run(events);
     SessionInspect.loadSession(id, true);
     document.getElementById('msg-input').focus();
@@ -2415,11 +2456,6 @@ const Sessions = (function(){
 
   async function switchSelected(){
     if(!_selectedId || _selectedIsCurrent) return;
-
-    if(Agent.running()){
-      Messages.sys('⚠ Cannot switch session while agent is running', 'err');
-      return;
-    }
 
     try{
       var r = await fetch('/session/switch', {
