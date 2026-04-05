@@ -1020,20 +1020,51 @@ function _makePlanBlock(plan){
   return card;
 }
 
+const _THINKING_PREVIEW_LEN = 120;
+
 function _makeThinkingBlock(text){
-  var el = document.createElement('div'); el.className = 'thinking-block open';
-  var first = text.split('\n')[0].slice(0,120), multi = text.length > first.length || text.indexOf('\n') !== -1;
-  var hdr = document.createElement('div'); hdr.className = 'tb-header';
-  var arrow = document.createElement('span'); arrow.className = 'tb-arrow'; arrow.textContent = '▾';
+  var el = document.createElement('div');
+  el.className = 'thinking-block open';
+  var hdr = document.createElement('div');
+  hdr.className = 'tb-header';
+  var arrow = document.createElement('span');
+  arrow.className = 'tb-arrow';
+  arrow.textContent = '▾';
   var prev = document.createElement('span'); prev.className = 'tb-preview';
-  prev.textContent = '💭 thinking…';
-  hdr.appendChild(arrow); hdr.appendChild(prev); el.appendChild(hdr);
-  var body = document.createElement('div'); body.className = 'tb-body'; body.textContent = text; el.appendChild(body);
+  hdr.appendChild(arrow);
+  hdr.appendChild(prev);
+  el.appendChild(hdr);
+  var body = document.createElement('div');
+  body.className = 'tb-body';
+  body.textContent = text;
+  el.appendChild(body);
+  function refresh(){
+    var raw = body.textContent || '';
+    var firstLine = raw.split('\n')[0];
+    var first = firstLine.slice(0, _THINKING_PREVIEW_LEN);
+    var multi = firstLine.length > _THINKING_PREVIEW_LEN || raw.includes('\n');
+    var iter = el.dataset.iteration ? ' · iteration ' + el.dataset.iteration : '';
+    var open = el.classList.contains('open');
+    prev.textContent = open || !raw.trim() ? '💭 thinking…' + iter : '💭 ' + first + (multi ? '…' : '') + iter;
+  }
   el.onclick = function(){
     var open = el.classList.toggle('open');
     arrow.textContent = open ? '▾' : '▶';
-    prev.textContent = open ? '💭 thinking…' : '💭 ' + first + (multi ? '…' : '');
+    refresh();
   };
+  el._setThinkingText = function(next){
+    body.textContent = next || '';
+    refresh();
+  };
+  el._appendThinkingText = function(next){
+    body.textContent += next || '';
+    refresh();
+  };
+  el._setThinkingIteration = function(iter){
+    el.dataset.iteration = iter || '';
+    refresh();
+  };
+  refresh();
   return el;
 }
 
@@ -1390,6 +1421,63 @@ const Tools = (function(){
   return {call, resolve, endGroup, reset};
 })();
 
+const ThinkingStream = (function(){
+  var block = null, text = '', iteration = '';
+  function _ensure(){
+    if(block) return block;
+    Messages.hideEmpty();
+    block = _makeThinkingBlock('');
+    if(iteration) block._setThinkingIteration(iteration);
+    Messages.pane().appendChild(block); Scroll.maybe();
+    return block;
+  }
+  function setIteration(iter){
+    iteration = iter || '';
+    if(block) block._setThinkingIteration(iteration);
+  }
+  function start(){
+    text = '';
+    _ensure()._setThinkingText('');
+  }
+  function delta(part){
+    if(!part) return;
+    text += part;
+    _ensure()._appendThinkingText(part);
+    Scroll.maybe();
+  }
+  function finalize(fullText){
+    if(!fullText){
+      if(!block) return;
+      if(!text.trim()){
+        var oldBlock = block;
+        block = null;
+        text = '';
+        if(oldBlock && oldBlock.parentNode) oldBlock.parentNode.removeChild(oldBlock);
+        return;
+      }
+      fullText = text;
+    }
+    if(block){
+      block._setThinkingText(fullText);
+      if(iteration) block._setThinkingIteration(iteration);
+      block = null;
+    } else {
+      Messages.hideEmpty();
+      block = _makeThinkingBlock(fullText);
+      if(iteration) block._setThinkingIteration(iteration);
+      Messages.pane().appendChild(block);
+      block = null;
+    }
+    text = '';
+    Scroll.maybe();
+  }
+  function reset(){
+    if(block && block.parentNode) block.parentNode.removeChild(block);
+    block = null; text = ''; iteration = '';
+  }
+  return {start, delta, finalize, reset, setIteration};
+})();
+
 // ─────────────────────────────────────────────────────────────────────────────
 // REPLAY (restore history on reconnect)
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1692,9 +1780,14 @@ const Agent = (function(){
       case 'token':
         Tools.endGroup(); if(!Stream.active()) Stream.start(); Stream.token(evt.data); _hadContent = true;
         break;
+      case 'thinking_live':
+        if(evt.data && evt.data.phase === 'start') ThinkingStream.start();
+        else if(evt.data && evt.data.phase === 'delta') ThinkingStream.delta(evt.data.text || '');
+        _hadContent = true;
+        break;
       case 'thinking':
         Stream.finalize(); Tools.endGroup(); Messages.hideEmpty();
-        Messages.pane().appendChild(_makeThinkingBlock(evt.data)); Scroll.maybe(); _hadContent = true;
+        ThinkingStream.finalize(evt.data); _hadContent = true;
         break;
       case 'session':
         setSession(evt.data);
@@ -1716,7 +1809,8 @@ const Agent = (function(){
         var mi = String(evt.data).match(/(\d+)\/(\d+)/);
         if(mi){
           Stream.finalize(); Tools.endGroup();
-          if(_hadContent) Messages.sys('— iteration ' + mi[1] + '/' + mi[2] + ' —', 'info');
+          ThinkingStream.setIteration(mi[1] + '/' + mi[2]);
+          Messages.sys('— iteration ' + mi[1] + '/' + mi[2] + ' —', 'info');
           _hadContent = false; Status.iter(mi[1] + '/' + mi[2]);
         }
         break;
@@ -1727,7 +1821,7 @@ const Agent = (function(){
            	_onDone(evt.data);
                     break;
       case 'error':
-        Stream.finalize(); Tools.endGroup();
+        Stream.finalize(); Tools.endGroup(); ThinkingStream.finalize();
         Messages.sys('⚠ ' + evt.data, 'err');
         transition('idle'); Status.set('error', 'err'); Status.iter('');
         break;
@@ -1741,7 +1835,7 @@ const Agent = (function(){
   }
 
   function _onDone(reason){
-    Stream.finalize(); Tools.endGroup(); Status.iter('');
+    Stream.finalize(); Tools.endGroup(); ThinkingStream.finalize(); Status.iter('');
     Messages.showProgress(false);
     var isWait = String(reason || '').startsWith('waiting'), isErr = reason === 'error' || reason === 'stopped';
     if(isWait){
@@ -1763,13 +1857,13 @@ const Agent = (function(){
       var imgEl = document.createElement('img'); imgEl.className = 'msg-img'; imgEl.src = img.previewURL; imgEl.alt = 'image';
       body.appendChild(imgEl); imgEl.onload = function(){ URL.revokeObjectURL(img.previewURL); };
     }
-    Scroll.pin(); transition('running'); Status.set('thinking…', 'run'); Tools.reset(); _hadContent = false; Messages.showProgress(true);
+    Scroll.pin(); transition('running'); Status.set('thinking…', 'run'); Tools.reset(); ThinkingStream.reset(); _hadContent = false; Messages.showProgress(true);
     requestId = 'r' + Date.now() + Math.random().toString(36).slice(2,6);
     try{
       var resp = await fetch('/chat', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({message:fullText, session_id:sessionId, request_id:requestId})});
       if(!resp.ok){ var err = await resp.json().catch(function(){ return {error:'HTTP ' + resp.status}; }); throw new Error(err.error || 'HTTP ' + resp.status); }
     }catch(err){
-      Stream.finalize(); Tools.endGroup();
+      Stream.finalize(); Tools.endGroup(); ThinkingStream.reset();
       Messages.showProgress(false);
       Messages.sys('Failed to send: ' + err.message, 'err');
       transition('idle'); Status.set('error', 'err'); Status.iter('');
