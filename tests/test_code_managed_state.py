@@ -4,6 +4,9 @@ from pathlib import Path
 import sys
 
 
+for module_name in ("agent_core", "agent_tools"):
+    sys.modules.pop(module_name, None)
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "LMAgent"))
 
 from agent_core import PlanManager, TaskStateManager, TodoManager
