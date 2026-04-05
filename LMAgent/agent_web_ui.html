@@ -737,13 +737,13 @@ header{
   <div class="panel-hdr">
     <span>Status</span>
     <div style="display:flex;gap:4px;align-items:center">
-      <button class="ft-icon-btn" onclick="SessionInspect.refresh()" title="Refresh">⟳</button>
+      <button class="ft-icon-btn" onclick="SessionInspect.refresh(true)" title="Refresh">⟳</button>
       <button class="btn" onclick="UI.closeInspect()">✕</button>
     </div>
   </div>
   <div class="si-refresh-row">
     <span class="si-session-label" id="si-session-label">No active session</span>
-    <span class="si-refresh-btn" onclick="SessionInspect.refresh()">⟳ refresh</span>
+    <span class="si-refresh-btn" onclick="SessionInspect.refresh(true)">⟳ refresh</span>
   </div>
   <div class="si-refresh-status" id="si-refresh-status"></div>
   <div id="si-body">
@@ -2743,7 +2743,7 @@ const SessionInspect = (function(){
 
   function refresh(force){
     _lastRefresh = Date.now();
-    if(force !== false) _version = '-1';
+    if(force === true) _version = '-1';
     var sid = _followCurrent ? Agent.getSession() : (_sid || Agent.getSession());
     if(sid !== _sid) _setSid(sid);
     _fetchAll(sid);
@@ -2906,7 +2906,7 @@ const UI = (function(){
     toggleSessions:  function(){ _toggle('sessions-panel',         function(){ Sessions.load(); }); },
     toggleTools:     function(){ _toggle('tools-panel',            function(){ ToolsPanel.load(); }); },
     toggleMessaging: function(){ _toggle('messaging-panel',        function(){ Messaging.refresh(); }); },
-    toggleInspect:   function(){ _toggle('session-inspect-panel',  function(){ SessionInspect.refresh(); }); },
+    toggleInspect:   function(){ _toggle('session-inspect-panel',  function(){ SessionInspect.refresh(true); }); },
     closeFiles:     function(){ _closePanel('files-panel');            overlay().classList.remove('show'); },
     closeSessions:  function(){ _closePanel('sessions-panel');         overlay().classList.remove('show'); },
     closeTools:     function(){ _closePanel('tools-panel');            overlay().classList.remove('show'); },
