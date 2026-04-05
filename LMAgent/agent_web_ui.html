@@ -804,6 +804,7 @@ const _TOKEN = '__AGENT_TOKEN__';
 // UTILITIES
 // ─────────────────────────────────────────────────────────────────────────────
 var MAX_ARGS_DISPLAY_LENGTH = 50;
+var MAX_OUTCOME_DISPLAY_LENGTH = 120;
 function _esc(s){ return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;'); }
 
 // Extract the primary human-readable argument from a tool's JSON args string.
@@ -844,7 +845,7 @@ function _fmtPrimaryArg(toolName, argsJson){
 
 function _fmtOutcomeText(outcome){
   var text = outcome == null ? '' : String(outcome).trim();
-  return text.length > 120 ? text.slice(0, 120) + '…' : text;
+  return text.length > MAX_OUTCOME_DISPLAY_LENGTH ? text.slice(0, MAX_OUTCOME_DISPLAY_LENGTH) + '…' : text;
 }
 
 function _setToolOutcome(row, outcome){

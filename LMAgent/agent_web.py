@@ -374,6 +374,7 @@ def _resolve_permission_mode() -> PermissionMode:
 #   [^[]               – non-CSI single-char escape sequences (e.g. \x1b=, \x1bM)
 #   $                  – lone ESC at end of string (incomplete/trailing sequence)
 _ANSI_ESCAPE = re.compile(r'\x1b(?:\[[0-9;]*[A-Za-z]|[^[]|$)')
+_MAX_TOOL_OUTCOME_LENGTH = 200
 
 _stream_queues:      list           = []
 _stream_queues_lock: threading.Lock = threading.Lock()
@@ -646,17 +647,12 @@ def _web_dispatch_bca_tool(fn_name, args, workspace, brief=None):
 
     if fn_name not in _BCA_SILENT_TOOLS:
         ok = result.get("success", False)
-        outcome = (
-            result.get("summary")
-            or result.get("message")
-            or result.get("status")
-            or (result.get("error", "") if not ok else "")
-        )
+        outcome = _tool_outcome_text(result)
         _broadcast(("tool", {
             "phase": "result",
             "name": fn_name,
             "success": ok,
-            "outcome": str(outcome)[:200],
+            "outcome": outcome[:_MAX_TOOL_OUTCOME_LENGTH],
         }))
 
     return result
@@ -964,6 +960,17 @@ def _is_noisy(msg: str) -> bool:
     return any(ml.startswith(kw) or kw in ml[:40] for kw in _STATUS_NOISE)
 
 
+def _tool_outcome_text(result: dict) -> str:
+    """Return the clearest short outcome string from a tool result payload."""
+    return str(
+        result.get("summary")
+        or result.get("message")
+        or result.get("status")
+        or result.get("error")
+        or ""
+    )
+
+
 def _push_event(event, stop_event, last_status: list, flush_thinking=None) -> None:
     if stop_event and stop_event.is_set():
         return
@@ -983,7 +990,7 @@ def _push_event(event, stop_event, last_status: list, flush_thinking=None) -> No
             "phase": "result",
             "name": edata.get("name", ""),
             "success": bool(edata.get("success")),
-            "outcome": edata.get("summary") or edata.get("error") or "",
+            "outcome": _tool_outcome_text(edata)[:_MAX_TOOL_OUTCOME_LENGTH],
         }))
 
     elif etype == "iteration":
