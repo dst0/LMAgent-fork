@@ -475,10 +475,10 @@ class BriefExtractor:
 # =============================================================================
 
 _LEAF_AGENT_TOOLS        = frozenset({"read", "write", "edit", "ls", "glob", "grep", "shell",
-                                       "todo_add", "todo_complete", "todo_list", "report_result"})
+                                       "todo_add", "todo_list", "report_result"})
 _INNER_AGENT_EXTRA_TOOLS = frozenset({"delegate", "decompose"})
 _ROOT_AGENT_EXTRA_TOOLS  = frozenset({"mkdir", "git_status", "git_diff", "git_add", "git_commit",
-                                       "task_state_update", "task_state_get"})
+                                       "task_state_get"})
 
 
 def get_depth_scoped_tools(all_schemas: List[Dict[str, Any]], depth: int,

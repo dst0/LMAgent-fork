@@ -825,7 +825,7 @@ function _getPrimaryArg(toolName, argsJson){
   if(_PRIMARY_ARG_QUERY_TOOLS[toolName]) return obj.query || obj.text || null;
   if(_PRIMARY_ARG_URL_TOOLS[toolName])   return obj.url || null;
   if(toolName === 'git_commit') return obj.message || null;
-  if(toolName === 'todo_add' || toolName === 'todo_update') return obj.description || obj.text || null;
+  if(toolName === 'todo_add') return obj.description || obj.text || null;
   if(toolName === 'delegate_task' || toolName === 'spawn_agent') return obj.task || obj.description || null;
   // Generic fallback: return value of first key if it's a short string
   var keys = Object.keys(obj);
@@ -864,13 +864,11 @@ var _TOOL_LABELS = {
   git_branch:'Git branch', git_push:'Git push',
   git_pull:'Git pull', git_log:'Git log',
   // Todos
-  todo_add:'Add todo', todo_complete:'Complete todo',
-  todo_update:'Update todo', todo_list:'List todos',
+  todo_add:'Add todo', todo_list:'List todos',
   // Planning
-  plan_complete_step:'Complete plan step', plan_update:'Update plan',
+  plan_update:'Update plan',
   // Task state
   task:'Create task file',
-  task_state_update:'Update task state',
   task_state_get:'Get task state',
   task_reconcile:'Reconcile tasks',
   // Web / external
@@ -2176,9 +2174,9 @@ const SessionInspect = (function(){
   async function _fetchHistory(sid){ if(!sid) return; try{ _renderHistory(await fetch('/session/history?session_id='+encodeURIComponent(sid)).then(function(r){ return r.json(); })); }catch(_){} }
 
   // Tool names that affect each section
-  var _TODO_TOOLS = ['todo_add','todo_complete','todo_update','todo_list'];
-  var _TASK_TOOLS = ['task_state_update','task_state_get','task_reconcile'];
-  var _PLAN_TOOLS = ['plan_complete_step'];
+  var _TODO_TOOLS = ['todo_add','todo_list'];
+  var _TASK_TOOLS = ['task_state_get','task_reconcile'];
+  var _PLAN_TOOLS = [];
 
   var _lastRefresh = 0;
 

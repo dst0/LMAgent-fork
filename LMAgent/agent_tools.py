@@ -891,32 +891,9 @@ TOOL_SCHEMAS: List[Dict[str, Any]] = [
                                       "notes": {"type": "string"}},
                        "required": ["description"]}}},
     {"type": "function", "function": {
-        "name": "todo_complete",
-        "description": "Mark a todo completed. Each todo_id must be completed ONCE. When all_complete=true, immediately output TASK_COMPLETE.",
-        "parameters": {"type": "object",
-                       "properties": {"todo_id": {"type": "integer"}},
-                       "required": ["todo_id"]}}},
-    {"type": "function", "function": {
-        "name": "todo_update", "description": "Update todo status.",
-        "parameters": {"type": "object",
-                       "properties": {"todo_id": {"type": "integer"},
-                                      "status": {"type": "string",
-                                                 "enum": ["pending", "in_progress",
-                                                          "completed", "blocked"]},
-                                      "notes": {"type": "string"}},
-                       "required": ["todo_id", "status"]}}},
-    {"type": "function", "function": {
         "name": "todo_list",
-        "description": "List todos. If all_complete=true is returned, output TASK_COMPLETE immediately.",
+        "description": "List todos. Statuses are managed by code.",
         "parameters": {"type": "object", "properties": {}}}},
-
-    {"type": "function", "function": {
-        "name": "plan_complete_step",
-        "description": "Mark a plan step complete after verification.",
-        "parameters": {"type": "object",
-                       "properties": {"step_id": {"type": "string"},
-                                      "verification_notes": {"type": "string"}},
-                       "required": ["step_id"]}}},
 
     # ── Delegation ────────────────────────────────────────────────────────────
     # 'task' kept for backward compat — routes to BCA internally.
@@ -939,21 +916,6 @@ TOOL_SCHEMAS: List[Dict[str, Any]] = [
                        },
                        "required": ["task_type", "instructions", "file_path"]}}},
 
-    {"type": "function", "function": {
-        "name": "task_state_update",
-        "description": "Checkpoint task progress. Call after each file processed.",
-        "parameters": {"type": "object",
-                       "properties": {
-                           "objective":            {"type": "string"},
-                           "completion_gate":      {"type": "string"},
-                           "total_count":          {"type": "integer"},
-                           "processed_count":      {"type": "integer"},
-                           "remaining_queue":      {"type": "array", "items": {"type": "string"}},
-                           "rename_map":           {"type": "object"},
-                           "last_error":           {"type": "string"},
-                           "recovery_instruction": {"type": "string"},
-                           "next_action":          {"type": "string"},
-                       }}}},
     {"type": "function", "function": {
         "name": "task_state_get",
         "description": "Retrieve current task state checkpoint.",
@@ -1017,7 +979,7 @@ TOOL_HANDLERS: Dict[str, Callable] = {
 _REQUIRED_ARG_TOOLS = frozenset({
     "shell",
     "write", "read", "edit", "glob", "grep", "ls", "mkdir",
-    "todo_add", "todo_complete", "todo_update", "plan_complete_step",
+    "todo_add",
     "git_add", "git_commit", "git_branch", "git_diff",
     "task", "delegate", "decompose", "report_result",
     "vision",

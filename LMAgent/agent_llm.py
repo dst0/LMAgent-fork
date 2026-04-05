@@ -90,7 +90,7 @@ Output TASK_COMPLETE the instant the deliverable exists and is verified. It is a
 
 When to output it:
 - File/output exists and is verified correct
-- todo_complete returned all_complete: true
+- Code-managed bookkeeping shows the work is done
 - The user's question is answered
 - The plan is finished and verified
 
@@ -114,8 +114,8 @@ Pass → TASK_COMPLETE. Fail → one fix attempt → TASK_COMPLETE or BLOCKED.
 Make changes directly. Only write a script if the task IS to produce a script.
 
 **5. Todos are bookkeeping only.**
-- Complete each todo ID exactly once — never twice
-- all_complete: true → TASK_COMPLETE immediately
+- Code manages plan/task/todo statuses automatically
+- Use todo_add only to draft work before execution starts
 - Never add todos after execution starts
 
 **6. Self-correct once.**
@@ -270,9 +270,8 @@ When stuck, output exactly:
 Files:      read, write, edit, glob, grep, ls, mkdir
 Shell:      shell (sandboxed — 30s timeout, 512MB memory default)
 Git:        git_status, git_diff, git_add, git_commit, git_branch
-Todos:      todo_add, todo_complete, todo_update, todo_list
-Task State: task_state_update, task_state_get, task_reconcile
-Planning:   plan_complete_step
+Todos:      todo_add, todo_list
+Task State: task_state_get, task_reconcile
 Delegation: delegate (single focused sub-task with a deliverable contract)
             decompose (split into ≤8 sequential sub-tasks with dependencies)
             task (backward-compat single-file delegation)
@@ -1107,7 +1106,8 @@ def _process_tool_calls(
             task_op_called = True
 
         if result.get("success"):
-            if fn_name in ("write", "edit", "mkdir", "shell", "powershell"):
+            if fn_name in ("write", "edit", "mkdir", "shell", "powershell",
+                           "delegate", "decompose", "task"):
                 work_progressed = True
             if not fn_name.startswith("todo_") and not fn_name.startswith("task_state_"):
                 non_bookkeeping_success = True
@@ -1122,22 +1122,6 @@ def _process_tool_calls(
                     + (f" → {artifacts}" if artifacts else "")
                 )})
 
-            if fn_name == "todo_complete" and result.get("all_complete"):
-                emit("log", {"message": "✓ All todos complete"})
-                messages.append({
-                    "role": "tool", "tool_call_id": tc_id, "name": fn_name,
-                    "content": json.dumps(result),
-                })
-                messages.append({
-                    "role": "user",
-                    "content": (
-                        "✅ ALL TODOS COMPLETE.\n\n"
-                        "Your task is finished. Output TASK_COMPLETE right now.\n"
-                        "Do NOT call any more tools."
-                    ),
-                })
-                continue
-
         else:
             emit("tool_result", {"name": fn_name, "success": False,
                                   "error": result.get("error", "")[:200]})
@@ -1145,23 +1129,6 @@ def _process_tool_calls(
             if fn_name in ("delegate", "decompose", "task"):
                 error = result.get("error", result.get("summary", "Sub-agent failed"))
                 emit("warning", {"message": f"Sub-agent blocked/failed: {error[:120]}"})
-
-            if (fn_name == "todo_complete"
-                    and result.get("already_completed")
-                    and result.get("all_complete")):
-                emit("warning", {"message": "Loop: completing already-done todo"})
-                messages.append({
-                    "role": "tool", "tool_call_id": tc_id, "name": fn_name,
-                    "content": json.dumps(result),
-                })
-                messages.append({
-                    "role": "user",
-                    "content": (
-                        "⚠️ LOOP DETECTED: You are re-completing finished todos.\n\n"
-                        "ALL TODOS ARE DONE. Output TASK_COMPLETE now."
-                    ),
-                })
-                continue
 
         result_str = json.dumps(result)
         if len(result_str) > Config.MAX_TOOL_OUTPUT:
@@ -1183,18 +1150,19 @@ def _process_tool_calls(
         latest_todos = todo_mgr.list_all().get("todos", [])
         in_progress = [t for t in latest_todos if t.get("status") == "in_progress"]
         pending = [t for t in latest_todos if t.get("status") == "pending"]
-        if non_bookkeeping_success and pending and not in_progress:
-            first = pending[0]
-            _run_auto_tool(
-                "todo_update",
-                {
-                    "todo_id": first.get("id"),
-                    "status": "in_progress",
-                    "notes": "Server auto-sync after successful execution step.",
-                },
-                f"tc_{iteration}_auto_todo_update",
+        if work_progressed:
+            sync = todo_mgr.advance_after_progress(
+                "Server auto-sync after successful execution step."
             )
-            emit("log", {"message": f"Server-synced todo #{first.get('id')} to in_progress"})
+            if sync.get("completed"):
+                emit("log", {"message": f"Server-completed todo #{sync['completed']}"})
+            if sync.get("activated"):
+                emit("log", {"message": f"Server-started todo #{sync['activated']}"})
+            latest_todos = todo_mgr.list_all().get("todos", [])
+        elif non_bookkeeping_success and pending and not in_progress:
+            next_todo = todo_mgr.start_next_pending("Server auto-sync selected next todo.")
+            if next_todo is not None:
+                emit("log", {"message": f"Server-started todo #{next_todo.id}"})
             latest_todos = todo_mgr.list_all().get("todos", [])
 
     if state_mgr and should_reconcile:
@@ -1238,15 +1206,11 @@ def _process_tool_calls(
             or state.next_action != next_action
         )
         if needs_update:
-            _run_auto_tool(
-                "task_state_update",
-                {
-                    "objective": objective,
-                    "total_count": total,
-                    "processed_count": processed,
-                    "next_action": next_action,
-                },
-                f"tc_{iteration}_auto_task_state",
+            state_mgr.sync(
+                objective=objective,
+                total_count=total,
+                processed_count=processed,
+                next_action=next_action,
             )
             emit("log", {"message": "Server-synced task state checkpoint"})
 
