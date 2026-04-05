@@ -1,4 +1,3 @@
-import re
 import unittest
 from pathlib import Path
 
@@ -19,13 +18,9 @@ class SessionSwitchDuringRunTests(unittest.TestCase):
 
     def test_backend_session_switch_endpoint_no_longer_rejects_busy_agent(self):
         content = AGENT_WEB.read_text()
-        match = re.search(
-            r"def session_switch\(\):\n(?P<body>(?:    .*\n)+?)\n@app\.route",
-            content,
-        )
-
-        self.assertIsNotNone(match)
-        body = match.group("body")
+        start = content.index("def session_switch():")
+        end = content.index('@app.route("/upload"', start)
+        body = content[start:end]
         self.assertNotIn('agent is busy', body)
         self.assertNotIn('_get_agent_state() != "idle"', body)
         self.assertIn('"""Switch the currently viewed session."""', body)
