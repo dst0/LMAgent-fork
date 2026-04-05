@@ -422,7 +422,7 @@ _chat_logs:     dict           = defaultdict(list)
 _chat_log_lock: threading.Lock = threading.Lock()
 _NO_SESSION_KEY = "_none_"
 _REPLAY_KINDS   = frozenset({
-    "token", "thinking", "tool", "status",
+    "user", "token", "thinking", "tool", "status",
     "iteration", "done", "error", "session", "plan",
 })
 
@@ -1357,6 +1357,7 @@ def chat():
 
     with _session_lock:
         _current_session_id = session_id
+    _broadcast(("user", message))
 
     def _run():
         try:
