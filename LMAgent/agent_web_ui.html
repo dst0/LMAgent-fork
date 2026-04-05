@@ -393,12 +393,18 @@ header{
 #sessions-list{flex:1;overflow-y:auto;padding:7px;display:flex;flex-direction:column;gap:3px}
 .session-item{padding:7px 9px;border-radius:var(--r);border:1px solid var(--border);cursor:pointer;transition:all .12s;background:var(--bg)}
 .session-item:hover{border-color:var(--teal-dim);background:var(--surface2)}
-.session-item.active{border-color:var(--amber)}
+.session-item.is-current{border-color:var(--teal-dim)}
+.session-item.is-active{border-color:var(--amber)}
+.session-item.is-current.is-active{border-color:var(--amber)}
 .si-id{font-size:9px;color:var(--text3);margin-bottom:2px}
 .si-task{font-size:11px;color:var(--text2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.si-stat{font-size:9.5px;margin-top:2px;color:var(--text3)}
-.si-stat.completed{color:var(--green)}.si-stat.error,.si-stat.interrupted{color:var(--red)}
-.si-stat.waiting{color:var(--purple)}.si-stat.active{color:var(--amber)}
+.si-badges{display:flex;gap:3px;flex-wrap:wrap;margin-top:3px;align-items:center}
+.si-badge{font-size:9px;border-radius:3px;padding:1px 5px;background:var(--surface3);color:var(--text3)}
+.si-badge.active{background:var(--amber);color:#0d0d0f}
+.si-badge.current{background:var(--teal-dim);color:var(--text1)}
+.si-badge.completed{color:var(--green)}.si-badge.error,.si-badge.interrupted{color:var(--red)}
+.si-badge.waiting{color:var(--purple)}.si-badge.idle{color:var(--text3)}
+.si-iter{font-size:9px;color:var(--text3);margin-left:auto}
 
 /* Session inspect panel */
 #session-inspect-panel{width:min(420px,96vw)}
@@ -1502,7 +1508,17 @@ const Agent = (function(){
     InputHistory.push(text); send(text);
   }
 
-  return {sendOrStop, newSession, running, getSession:function(){ return sessionId; }, setSession, _handle:handleEvent};
+  function switchSession(id, events){
+    sessionId = id; requestId = null; _hadContent = false; setSession(id);
+    Tools.reset(); Stream.reset(); ImageUpload.clear();
+    document.getElementById('messages').innerHTML = '<div id="replay-banner"></div><div id="empty"><div class="empty-glyph">λ_</div><p>Send a message to start working</p><div class="hint">/ commands &nbsp;·&nbsp; ↑↓ history &nbsp;·&nbsp; drag image</div></div>';
+    Status.set('ready',''); Status.iter('');
+    if(events && events.length) Replay.run(events);
+    SessionInspect.loadSession(id);
+    document.getElementById('msg-input').focus();
+  }
+
+  return {sendOrStop, newSession, running, getSession:function(){ return sessionId; }, setSession, switchSession, _handle:handleEvent};
 })();
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1662,19 +1678,40 @@ const Sessions = (function(){
     list.innerHTML = '<div style="padding:11px;color:var(--text3);font-size:10.5px">Loading…</div>';
     try{
       var d = await fetch('/sessions').then(function(r){ return r.json(); }), sessions = d.sessions || [];
+      var curId = d.current_session_id || null;
       if(!sessions.length){ list.innerHTML = '<div style="padding:11px;color:var(--text3);font-size:10.5px;font-style:italic">No sessions yet</div>'; return; }
       list.innerHTML = '';
       sessions.forEach(function(s){
         var item = document.createElement('div');
-        item.className = 'session-item' + (Agent.getSession() === s.id ? ' active' : '');
-        var statClass = s.status === 'completed' ? 'completed' : (s.status === 'error' || s.status === 'interrupted') ? 'error' : s.status === 'waiting' ? 'waiting' : s.status === 'active' ? 'active' : '';
-        item.innerHTML = '<div class="si-id">' + _esc(s.id.slice(-12)) + '</div><div class="si-task">' + _esc(s.task || '(no task)') + '</div><div class="si-stat ' + statClass + '">' + _esc(s.status) + (s.iterations ? ' · ' + s.iterations + ' iter' : '') + '</div>';
-        item.onclick = function(){
+        var isCurrent = curId === s.id;
+        var isActive  = s.status === 'active';
+        var cls = 'session-item';
+        if(isCurrent) cls += ' is-current';
+        if(isActive)  cls += ' is-active';
+        item.className = cls;
+
+        var statClass = isActive ? 'active'
+                      : s.status === 'completed' ? 'completed'
+                      : (s.status === 'error' || s.status === 'interrupted') ? 'error'
+                      : s.status === 'waiting' ? 'waiting'
+                      : 'idle';
+        var badges = '<span class="si-badge ' + statClass + '">' + _esc(s.status) + '</span>';
+        if(isCurrent) badges += '<span class="si-badge current">current</span>';
+        var iterStr = s.iterations ? '<span class="si-iter">' + s.iterations + ' iter</span>' : '';
+        item.innerHTML = '<div class="si-id">' + _esc(s.id.slice(-12)) + '</div>'
+          + '<div class="si-task">' + _esc(s.task || '(no task)') + '</div>'
+          + '<div class="si-badges">' + badges + iterStr + '</div>';
+
+        item.onclick = async function(){
           _selectedId = s.id;
-          // Switch to the inspect panel showing this session
-          SessionInspect.loadSession(s.id);
-          UI.closeAll();
-          UI.toggleInspect();
+          if(Agent.running()){ return; }
+          try{
+            var r = await fetch('/session/switch', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({session_id: s.id})});
+            var res = await r.json();
+            if(res.error){ Messages.sys('⚠ Could not switch session: ' + res.error, 'err'); UI.closeAll(); return; }
+            Agent.switchSession(s.id, res.events || []);
+            UI.closeAll();
+          }catch(e){ Messages.sys('⚠ Session switch failed: ' + (e.message || e), 'err'); UI.closeAll(); }
         };
         list.appendChild(item);
       });
