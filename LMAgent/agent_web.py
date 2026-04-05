@@ -49,6 +49,7 @@ from collections import defaultdict
 from pathlib import Path
 
 from flask import Flask, Response, jsonify, request
+from session_inspect import build_readable_history, load_session_inspect_payload
 
 try:
     from PIL import Image as _PIL_Image
@@ -163,7 +164,7 @@ _SSL_KEY  = os.environ.get("AGENT_KEY",  "")
 
 _rate_data: dict = {}
 _rate_lock       = threading.Lock()
-_RATE_LIMIT      = 120
+_RATE_LIMIT      = 300
 _RATE_WINDOW     = 60.0
 
 
@@ -1758,28 +1759,34 @@ def session_history():
         if not data:
             return jsonify({"error": "session not found"}), 404
         messages, meta = data
-        readable = []
-        for msg in messages:
-            role    = msg.get("role", "")
-            content = msg.get("content") or ""
-            if role == "user" and content:
-                readable.append({"role": "user", "content": str(content)[:4000]})
-            elif role == "assistant" and content:
-                clean, _ = strip_thinking(str(content))
-                if clean.strip():
-                    readable.append({"role": "assistant", "content": clean[:4000]})
-            elif role == "tool":
-                tool_name = msg.get("name", "tool")
-                try:
-                    result  = json.loads(str(content)) if content else {}
-                    success = bool(result.get("success", True))
-                except Exception:
-                    success = True
-                readable.append({"role": "tool", "name": tool_name, "success": success})
-        return jsonify({"messages": readable, "metadata": meta})
+        return jsonify({"messages": build_readable_history(messages, strip_thinking), "metadata": meta})
     except Exception as e:
         Log.error(f"[session/history] {e}")
         return jsonify({"error": "could not load session history"}), 500
+
+
+@app.route("/session/inspect")
+@_require_auth
+def session_inspect():
+    """Return todos, task-state, plan, and history in one payload."""
+    sid = request.args.get("session_id") or _current_session_id
+    if not sid:
+        return jsonify({"error": "no active session"}), 400
+    try:
+        return jsonify(load_session_inspect_payload(
+            WORKSPACE,
+            sid,
+            todo_manager_cls=TodoManager,
+            task_state_manager_cls=TaskStateManager,
+            plan_manager_cls=PlanManager,
+            session_manager_cls=SessionManager,
+            strip_thinking_func=strip_thinking,
+        ))
+    except LookupError:
+        return jsonify({"error": "session not found"}), 404
+    except Exception as e:
+        Log.error(f"[session/inspect] {e}")
+        return jsonify({"error": "could not load session status"}), 500
 
 
 @app.route("/session/eventlog")

@@ -80,6 +80,22 @@ header{
   display:flex;flex-direction:column;gap:0;
   transition:background .15s;
 }
+.request-progress{
+  display:none;align-self:center;align-items:center;gap:8px;
+  margin:8px auto 4px;padding:5px 10px;border-radius:999px;
+  border:1px solid var(--border);background:rgba(18,24,38,.82);
+  color:var(--text3);font-size:10px;letter-spacing:.04em;
+  backdrop-filter:blur(4px);
+}
+.request-progress.show{display:inline-flex}
+.request-progress-label{font-family:var(--sans);text-transform:uppercase}
+.request-progress-dots{display:inline-flex;align-items:center;gap:4px}
+.request-progress-dots span{
+  width:4px;height:4px;border-radius:50%;background:var(--amber);
+  opacity:.22;animation:reqPulse 1.3s ease-in-out infinite;
+}
+.request-progress-dots span:nth-child(2){animation-delay:.16s}
+.request-progress-dots span:nth-child(3){animation-delay:.32s}
 #messages.drag-over{
   background:rgba(62,207,178,.03);
   outline:2px dashed rgba(62,207,178,.3);outline-offset:-6px;
@@ -282,6 +298,7 @@ header{
 .dot.done{background:var(--green)}
 .dot.err{background:var(--red)}
 @keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
+@keyframes reqPulse{0%,100%{opacity:.22;transform:none}50%{opacity:.9;transform:translateY(-1px)}}
 #status-text{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 #iter-badge{font-size:9px;border:1px solid var(--border);border-radius:3px;padding:1px 5px;display:none}
 #mode-badge{font-size:9px;border:1px solid var(--border);border-radius:3px;padding:1px 5px;color:var(--text3)}
@@ -443,6 +460,7 @@ header{
 .si-section-arrow{font-size:9px;color:var(--text3);transition:transform .15s}
 .si-section.open .si-section-arrow{transform:rotate(90deg)}
 .si-section-body{display:none;padding:0 11px 8px}
+.si-refresh-status{display:none;padding:0 11px 8px;font-size:10.5px;color:var(--text3)}
 .si-section.open .si-section-body{display:block}
 
 /* Progress bar */
@@ -687,6 +705,7 @@ header{
     <span class="si-session-label" id="si-session-label">No active session</span>
     <span class="si-refresh-btn" onclick="SessionInspect.refresh()">⟳ refresh</span>
   </div>
+  <div class="si-refresh-status" id="si-refresh-status"></div>
   <div id="si-body">
     <!-- Todos section -->
     <div class="si-section open" id="si-todos-section">
@@ -1230,21 +1249,43 @@ function _finaliseToolGroup(group, total){
 // ─────────────────────────────────────────────────────────────────────────────
 // MESSAGES
 // ─────────────────────────────────────────────────────────────────────────────
+function _ensureRequestProgressEl(){
+  var el = document.getElementById('request-progress');
+  if(el) return el;
+  el = document.createElement('div');
+  el.className = 'request-progress';
+  el.id = 'request-progress';
+  el.setAttribute('aria-live', 'polite');
+  el.setAttribute('aria-hidden', 'true');
+  el.innerHTML = '<span class="request-progress-label">Working</span><span class="request-progress-dots" aria-hidden="true"><span></span><span></span><span></span></span>';
+  document.getElementById('messages').appendChild(el);
+  return el;
+}
+
 const Messages = (function(){
   var pane = function(){ return document.getElementById('messages'); };
   function hideEmpty(){ var e = document.getElementById('empty'); if(e) e.remove(); }
+  function progressEl(){ return _ensureRequestProgressEl(); }
+  function showProgress(show){
+    var el = progressEl(); if(!el) return;
+    el.classList.toggle('show', !!show);
+    el.setAttribute('aria-hidden', show ? 'false' : 'true');
+    if(show){ pane().appendChild(el); }
+  }
   function add(role, html, extra, asHtml){
     hideEmpty(); Tools.endGroup();
+    var progress = progressEl(), keepProgress = !!(progress && progress.classList.contains('show'));
     var d = document.createElement('div'); d.className = 'msg ' + role + (extra ? ' ' + extra : '');
     var labels = {user:'You', agent:'Agent'};
     d.innerHTML = '<div class="msg-label">' + (labels[role] || '') + '</div><div class="msg-body"></div>';
     pane().appendChild(d);
+    if(keepProgress) pane().appendChild(progress);
     var body = d.querySelector('.msg-body');
     if(html){ if(asHtml) body.innerHTML = html; else body.textContent = html; }
     Scroll.maybe(); return body;
   }
   function sys(text, variant){ add('sys', text, variant || ''); }
-  return {add, sys, pane, hideEmpty};
+  return {add, sys, pane, hideEmpty, showProgress};
 })();
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1594,6 +1635,7 @@ const Agent = (function(){
 
   function transition(next){
     state = next; lockUI(next !== 'idle');
+    Messages.showProgress(next === 'running');
     if(next === 'idle') Scroll.pin(); Scroll.update();
     next !== 'idle' ? ElapsedTimer.start() : ElapsedTimer.stop();
   }
@@ -1700,6 +1742,7 @@ const Agent = (function(){
 
   function _onDone(reason){
     Stream.finalize(); Tools.endGroup(); Status.iter('');
+    Messages.showProgress(false);
     var isWait = String(reason || '').startsWith('waiting'), isErr = reason === 'error' || reason === 'stopped';
     if(isWait){
       transition('waiting'); Status.set('waiting — will resume automatically', 'wait');
@@ -1720,13 +1763,14 @@ const Agent = (function(){
       var imgEl = document.createElement('img'); imgEl.className = 'msg-img'; imgEl.src = img.previewURL; imgEl.alt = 'image';
       body.appendChild(imgEl); imgEl.onload = function(){ URL.revokeObjectURL(img.previewURL); };
     }
-    Scroll.pin(); transition('running'); Status.set('thinking…', 'run'); Tools.reset(); _hadContent = false;
+    Scroll.pin(); transition('running'); Status.set('thinking…', 'run'); Tools.reset(); _hadContent = false; Messages.showProgress(true);
     requestId = 'r' + Date.now() + Math.random().toString(36).slice(2,6);
     try{
       var resp = await fetch('/chat', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({message:fullText, session_id:sessionId, request_id:requestId})});
       if(!resp.ok){ var err = await resp.json().catch(function(){ return {error:'HTTP ' + resp.status}; }); throw new Error(err.error || 'HTTP ' + resp.status); }
     }catch(err){
       Stream.finalize(); Tools.endGroup();
+      Messages.showProgress(false);
       Messages.sys('Failed to send: ' + err.message, 'err');
       transition('idle'); Status.set('error', 'err'); Status.iter('');
     }
@@ -1740,6 +1784,7 @@ const Agent = (function(){
     if(state !== 'running') return;
     // Optimistically freeze the UI immediately — don't wait for SSE confirmation
     Stream.reset(); Tools.endGroup();
+    Messages.showProgress(false);
     transition('idle'); Status.set('stopped — send a message to resume','');
     Status.iter(''); Messages.sys('— stopped (session saved — send a message to resume) —', 'warn');
     if(requestId){
@@ -2124,8 +2169,18 @@ const Sessions = (function(){
 // ─────────────────────────────────────────────────────────────────────────────
 const SessionInspect = (function(){
   var _sid = null, _autoTimer = null, _followCurrent = true;
+  var _fetchPromise = null, _queuedSid = null, _hasSnapshot = false;
+  var _SECTION_BODY_IDS = ['si-todos-body','si-tasks-body','si-plan-body','si-history-body'];
 
   function _setSid(id){
+    if(id !== _sid){
+      _hasSnapshot = false;
+      _setRefreshStatus('');
+      _SECTION_BODY_IDS.forEach(function(bodyId){
+        var el = document.getElementById(bodyId);
+        if(el) el.innerHTML = '<div class="si-empty">' + (id ? 'Loading…' : 'No active session') + '</div>';
+      });
+    }
     _sid = id;
     var lbl = document.getElementById('si-session-label');
     if(lbl) lbl.textContent = id ? ('session: ' + id.slice(-12)) : 'No active session';
@@ -2268,31 +2323,76 @@ const SessionInspect = (function(){
     el.classList.add('expanded'); btn.remove();
   }
 
-  async function _fetchAll(sid){
-    if(!sid) return;
-    try{
-      var [todos, tasks, plan, hist] = await Promise.all([
-        fetch('/session/todos?session_id=' + encodeURIComponent(sid)).then(function(r){ return r.json(); }),
-        fetch('/session/tasks?session_id=' + encodeURIComponent(sid)).then(function(r){ return r.json(); }),
-        fetch('/session/plan?session_id='  + encodeURIComponent(sid)).then(function(r){ return r.json(); }),
-        fetch('/session/history?session_id=' + encodeURIComponent(sid)).then(function(r){ return r.json(); }),
-      ]);
-      _renderTodos(todos);
-      _renderTasks(tasks);
-      _renderPlan(plan);
-      _renderHistory(hist);
-    }catch(e){
-      var msg = '<div class="si-empty">⚠ ' + _esc(String(e.message || e)) + '</div>';
-      ['si-todos-body','si-tasks-body','si-plan-body','si-history-body'].forEach(function(id){
-        var el = document.getElementById(id); if(el) el.innerHTML = msg;
-      });
+  function _setRefreshStatus(msg, isError){
+    var el = document.getElementById('si-refresh-status');
+    if(!el) return;
+    if(!msg){
+      el.style.display = 'none';
+      el.textContent = '';
+      return;
     }
+    el.style.display = 'block';
+    el.style.color = isError ? 'var(--amber)' : 'var(--text3)';
+    el.textContent = msg;
   }
 
-  async function _fetchTodos(sid){ if(!sid) return; try{ _renderTodos(await fetch('/session/todos?session_id='+encodeURIComponent(sid)).then(function(r){ return r.json(); })); }catch(_){} }
-  async function _fetchTasks(sid){ if(!sid) return; try{ _renderTasks(await fetch('/session/tasks?session_id='+encodeURIComponent(sid)).then(function(r){ return r.json(); })); }catch(_){} }
-  async function _fetchPlan(sid){  if(!sid) return; try{ _renderPlan(await fetch('/session/plan?session_id='+encodeURIComponent(sid)).then(function(r){ return r.json(); })); }catch(_){} }
-  async function _fetchHistory(sid){ if(!sid) return; try{ _renderHistory(await fetch('/session/history?session_id='+encodeURIComponent(sid)).then(function(r){ return r.json(); })); }catch(_){} }
+  function _renderFetchError(msg){
+    var html = '<div class="si-empty">⚠ ' + _esc(msg) + '</div>';
+    _SECTION_BODY_IDS.forEach(function(id){
+      var el = document.getElementById(id); if(el) el.innerHTML = html;
+    });
+  }
+
+  async function _fetchSnapshot(sid){
+    var res = await fetch('/session/inspect?session_id=' + encodeURIComponent(sid));
+    var data = null;
+    try{ data = await res.json(); }catch(_){}
+    if(!res.ok){
+      var err = new Error((data && data.error) || ('HTTP ' + res.status));
+      err.status = res.status;
+      err.rateLimited = res.status === 429;
+      throw err;
+    }
+    return data || {};
+  }
+
+  async function _fetchAll(sid){
+    if(!sid) return;
+    _queuedSid = sid;
+    if(_fetchPromise) return _fetchPromise;
+    _fetchPromise = (async function(){
+      while(_queuedSid){
+        var nextSid = _queuedSid;
+        _queuedSid = null;
+        try{
+          var snapshot = await _fetchSnapshot(nextSid);
+          _renderTodos(snapshot.todos || {});
+          _renderTasks(snapshot.tasks || {});
+          _renderPlan(snapshot.plan || {});
+          _renderHistory(snapshot.history || {});
+          _hasSnapshot = true;
+          _setRefreshStatus('');
+        }catch(e){
+          var msg = String(e && (e.message || e) || 'refresh failed');
+          if(_hasSnapshot){
+            var refreshMsg = e && e.rateLimited
+              ? 'Status refresh paused briefly after rate-limiting; retrying…'
+              : ('Status refresh failed: ' + msg);
+            _setRefreshStatus(refreshMsg, true);
+            continue;
+          }
+          _setRefreshStatus(msg, true);
+          _renderFetchError(msg);
+        }
+      }
+    })().finally(function(){ _fetchPromise = null; });
+    return _fetchPromise;
+  }
+
+  async function _fetchTodos(sid){ return _fetchAll(sid); }
+  async function _fetchTasks(sid){ return _fetchAll(sid); }
+  async function _fetchPlan(sid){  return _fetchAll(sid); }
+  async function _fetchHistory(sid){ return _fetchAll(sid); }
 
   // Tool names that affect each section
   var _TODO_TOOLS = ['todo_add','todo_list'];
@@ -2325,13 +2425,13 @@ const SessionInspect = (function(){
     if(evt.type === 'plan'){
       // Plan created/updated — render immediately from event data, then re-fetch for full state
       _renderPlan({plan: typeof evt.data === 'object' ? evt.data : null});
-      setTimeout(function(){ _fetchPlan(sid); }, 300);
+      setTimeout(function(){ _fetchAll(sid); }, 300);
     } else if(evt.type === 'tool'){
       var toolEvt = _toolEventInfo(evt.data);
       if(toolEvt.phase === 'result'){
         // Any tool result may affect todos, tasks or plan — refresh all three
         _lastRefresh = Date.now();
-        setTimeout(function(){ _fetchTodos(sid); _fetchTasks(sid); _fetchPlan(sid); }, 250);
+        setTimeout(function(){ _fetchAll(sid); }, 250);
       }
     } else if(evt.type === 'iteration'){
       // Each iteration boundary — refresh everything so all sections stay current
