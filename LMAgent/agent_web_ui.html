@@ -2331,7 +2331,10 @@ const SessionInspect = (function(){
         }catch(e){
           var msg = String(e && (e.message || e) || 'refresh failed');
           if(_hasSnapshot){
-            _setRefreshStatus(e && e.rateLimited ? 'Status refresh paused briefly after rate limiting; retrying…' : ('Status refresh failed: ' + msg), true);
+            var refreshMsg = e && e.rateLimited
+              ? 'Status refresh paused briefly after rate limiting; retrying…'
+              : ('Status refresh failed: ' + msg);
+            _setRefreshStatus(refreshMsg, true);
             continue;
           }
           _setRefreshStatus(msg, true);

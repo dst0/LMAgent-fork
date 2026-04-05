@@ -63,7 +63,7 @@ class _MissingSessionManager(_SessionManager):
 
 
 class SessionInspectTests(unittest.TestCase):
-    def test_build_readable_history_filters_and_truncates_roles(self):
+    def test_build_readable_history_filters_roles_and_trims_hidden_content(self):
         readable = build_readable_history(
             [
                 {"role": "user", "content": "User request"},
