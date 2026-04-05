@@ -473,6 +473,8 @@ header{
 .si-todo{display:flex;align-items:flex-start;gap:6px;padding:4px 0;border-bottom:1px solid var(--border);font-size:11px}
 .si-todo:last-child{border-bottom:none}
 .si-todo-icon{flex-shrink:0;width:14px;text-align:center;font-size:12px;margin-top:1px}
+.si-todo-icon.live{display:flex;align-items:center;justify-content:center}
+.si-live-dot{width:8px;height:8px;border-radius:999px;background:var(--green);box-shadow:0 0 0 rgba(62,201,122,.32);animation:si-live-pulse 1.8s ease-in-out infinite}
 .si-todo-body{flex:1;min-width:0}
 .si-todo-desc{color:var(--text2);line-height:1.4;word-break:break-word}
 .si-todo.status-completed .si-todo-desc{color:var(--text3);text-decoration:line-through}
@@ -486,6 +488,10 @@ header{
 .si-todo-status.completed{color:var(--green);background:rgba(62,201,122,.12)}
 .si-todo-status.blocked{color:var(--red);background:var(--red-dim)}
 .si-todo-notes{font-size:10px;color:var(--text3);margin-top:2px;font-style:italic}
+@keyframes si-live-pulse{
+  0%,100%{opacity:.55;transform:scale(.9);box-shadow:0 0 0 0 rgba(62,201,122,0)}
+  50%{opacity:1;transform:scale(1.12);box-shadow:0 0 10px 1px rgba(62,201,122,.35)}
+}
 
 /* Task state */
 .si-kv{display:flex;flex-direction:column;gap:3px;margin-bottom:5px}
@@ -2202,6 +2208,13 @@ const SessionInspect = (function(){
     if(lbl) lbl.textContent = id ? ('session: ' + id.slice(-12)) : 'No active session';
   }
 
+  function _statusIcon(status, icons){
+    if(status === 'in_progress'){
+      return '<span class="si-live-dot" aria-hidden="true"></span>';
+    }
+    return _esc((icons && icons[status]) || '❓');
+  }
+
   function toggleSection(name){
     var sec = document.getElementById('si-' + name + '-section'); if(!sec) return;
     sec.classList.toggle('open');
@@ -2222,9 +2235,10 @@ const SessionInspect = (function(){
     var html = '<div class="si-progress"><div class="si-progress-bar"><div class="si-progress-fill" style="width:' + pct + '%"></div></div><span class="si-progress-label">' + completed + '/' + total + ' (' + pct + '%)</span></div>';
     var _ICONS = {pending:'⏳', in_progress:'🔄', completed:'✅', blocked:'🚫'};
     todos.forEach(function(t){
-      var icon = _ICONS[t.status] || '❓';
+      var icon = _statusIcon(t.status, _ICONS);
+      var iconCls = 'si-todo-icon' + (t.status === 'in_progress' ? ' live' : '');
       html += '<div class="si-todo status-' + _esc(t.status) + '">';
-      html += '<div class="si-todo-icon">' + icon + '</div>';
+      html += '<div class="' + iconCls + '">' + icon + '</div>';
       html += '<div class="si-todo-body">';
       html += '<div class="si-todo-desc">' + _esc(t.description) + '</div>';
       html += '<div class="si-todo-meta"><span class="si-todo-id">#' + _esc(String(t.id)) + '</span><span class="si-todo-status ' + _esc(t.status) + '">' + _esc(t.status.replace('_', ' ')) + '</span></div>';
@@ -2289,9 +2303,10 @@ const SessionInspect = (function(){
     var html = '';
     if(plan.title) html += '<div style="font-size:11.5px;font-weight:600;color:var(--text);margin-bottom:7px">' + _esc(plan.title) + '</div>';
     steps.forEach(function(s, i){
-      var icon = _ICONS[s.status] || '❓';
+      var icon = _statusIcon(s.status, _ICONS);
+      var iconCls = 'si-todo-icon' + (s.status === 'in_progress' ? ' live' : '');
       html += '<div class="si-todo status-' + _esc(s.status) + '" style="align-items:flex-start">';
-      html += '<div class="si-todo-icon">' + icon + '</div>';
+      html += '<div class="' + iconCls + '">' + icon + '</div>';
       html += '<div class="si-todo-body">';
       html += '<div class="si-todo-desc">' + _esc(s.description || '') + '</div>';
       if(s.verification) html += '<div class="si-todo-notes">✓ ' + _esc(s.verification) + '</div>';
