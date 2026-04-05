@@ -2255,7 +2255,7 @@ const SessionInspect = (function(){
     if(!body) return;
     if(data.error){ body.innerHTML = '<div class="si-empty">⚠ ' + _esc(data.error) + '</div>'; if(badge) badge.textContent = '!'; return; }
     var s = data.state;
-    if(!s){ body.innerHTML = '<div class="si-empty">No task state yet.</div>'; if(badge) badge.textContent = '-'; return; }
+    if(!s){ body.innerHTML = '<div class="si-empty">No task state yet.</div>'; if(badge) badge.textContent = '—'; return; }
     var pct = s.total_count > 0 ? Math.round(s.processed_count / s.total_count * 100) : 0;
     if(badge) badge.textContent = s.processed_count + '/' + s.total_count;
     var html = '';
