@@ -624,10 +624,6 @@ header{
       <p>Send a message to start working</p>
       <div class="hint">/ commands &nbsp;·&nbsp; ↑↓ history &nbsp;·&nbsp; drag image</div>
     </div>
-    <div class="request-progress" id="request-progress" aria-live="polite" aria-hidden="true">
-      <span class="request-progress-label">Working</span>
-      <span class="request-progress-dots" aria-hidden="true"><span></span><span></span><span></span></span>
-    </div>
   </div>
 
   <button id="scroll-btn" onclick="Scroll.jump()" title="↓">↓</button>
@@ -1253,10 +1249,23 @@ function _finaliseToolGroup(group, total){
 // ─────────────────────────────────────────────────────────────────────────────
 // MESSAGES
 // ─────────────────────────────────────────────────────────────────────────────
+function _ensureRequestProgressEl(){
+  var el = document.getElementById('request-progress');
+  if(el) return el;
+  el = document.createElement('div');
+  el.className = 'request-progress';
+  el.id = 'request-progress';
+  el.setAttribute('aria-live', 'polite');
+  el.setAttribute('aria-hidden', 'true');
+  el.innerHTML = '<span class="request-progress-label">Working</span><span class="request-progress-dots" aria-hidden="true"><span></span><span></span><span></span></span>';
+  document.getElementById('messages').appendChild(el);
+  return el;
+}
+
 const Messages = (function(){
   var pane = function(){ return document.getElementById('messages'); };
   function hideEmpty(){ var e = document.getElementById('empty'); if(e) e.remove(); }
-  function progressEl(){ return document.getElementById('request-progress'); }
+  function progressEl(){ return _ensureRequestProgressEl(); }
   function showProgress(show){
     var el = progressEl(); if(!el) return;
     el.classList.toggle('show', !!show);
@@ -1789,7 +1798,7 @@ const Agent = (function(){
     try{ await fetch('/new', {method:'POST'}); }catch(_){}
     sessionId = requestId = null; _hadContent = false; setSession(null);
     Tools.reset(); Stream.reset(); ImageUpload.clear();
-    document.getElementById('messages').innerHTML = '<div id="replay-banner"></div><div id="empty"><div class="empty-glyph">λ_</div><p>Send a message to start working</p><div class="hint">/ commands &nbsp;·&nbsp; ↑↓ history &nbsp;·&nbsp; drag image</div></div><div class="request-progress" id="request-progress" aria-live="polite" aria-hidden="true"><span class="request-progress-label">Working</span><span class="request-progress-dots" aria-hidden="true"><span></span><span></span><span></span></span></div>';
+    document.getElementById('messages').innerHTML = '<div id="replay-banner"></div><div id="empty"><div class="empty-glyph">λ_</div><p>Send a message to start working</p><div class="hint">/ commands &nbsp;·&nbsp; ↑↓ history &nbsp;·&nbsp; drag image</div></div>';
     Status.set('ready',''); Status.iter(''); document.getElementById('msg-input').focus();
   }
 
