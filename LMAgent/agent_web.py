@@ -1242,7 +1242,7 @@ def _execute_agent(message, session_id, request_id, stop_ev,
             if web_origin:
                 # Keep the user's manually selected session if they switched away
                 # while this run was still streaming in the background.
-                if _current_session_id == session_id:  # still following this run
+                if _current_session_id == session_id:  # user has not switched the viewed session mid-run
                     _current_session_id = result.session_id
                     should_broadcast_session = True
         if web_origin:
