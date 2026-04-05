@@ -927,6 +927,39 @@ class TodoManager:
     def complete(self, todo_id: int) -> Dict[str, Any]:
         return self.update_status(todo_id, "completed")
 
+    def start_next_pending(self, notes: str = "") -> Optional[TodoItem]:
+        if any(t.status == "in_progress" for t in self.todos):
+            return next((t for t in self.todos if t.status == "in_progress"), None)
+        item = next((t for t in self.todos if t.status == "pending"), None)
+        if not item:
+            return None
+        self.update_status(item.id, "in_progress", notes)
+        return item
+
+    def advance_after_progress(self, notes: str = "") -> Dict[str, Any]:
+        active = next((t for t in self.todos if t.status == "in_progress"), None)
+        if not active:
+            active = next((t for t in self.todos if t.status == "pending"), None)
+        if not active:
+            return {"success": True, "completed": None, "activated": None}
+        self.update_status(active.id, "completed", notes)
+        nxt = self.start_next_pending("Server selected the next todo after progress.")
+        return {"success": True, "completed": active.id, "activated": nxt.id if nxt else None}
+
+    def complete_remaining(self, notes: str = "") -> Dict[str, Any]:
+        updated = 0
+        for item in self.todos:
+            if item.status in ("completed", "blocked"):
+                continue
+            item.status = "completed"
+            item.updated = datetime.now().isoformat()
+            if notes:
+                item.notes = notes
+            updated += 1
+        if updated:
+            self._save()
+        return {"success": True, "updated": updated}
+
     def list_all(self) -> Dict[str, Any]:
         return {
             "success":   True,
@@ -1015,11 +1048,26 @@ class PlanManager:
                 if self.current_step_id == step_id:
                     self.current_step_id = None
                 Log.plan(f"Completed step: {step_id}")
+            self.plan["status"] = "completed" if self.is_complete() else "active"
             self._save()
             return
 
     def start_step(self, step_id: str) -> None:    self._update_step(step_id, "in_progress")
     def complete_step(self, step_id: str) -> None: self._update_step(step_id, "completed")
+
+    def complete_remaining(self) -> Dict[str, Any]:
+        if not self.plan:
+            return {"success": False, "error": "No active plan"}
+        updated = 0
+        for step in self.plan["steps"]:
+            if step["status"] == "completed":
+                continue
+            step["status"] = "completed"
+            updated += 1
+        self.current_step_id = None
+        self.plan["status"] = "completed"
+        self._save()
+        return {"success": True, "updated": updated}
 
     def is_complete(self) -> bool:
         return bool(self.plan) and all(
@@ -1418,6 +1466,46 @@ class TaskStateManager:
         state.last_updated = datetime.now().isoformat()
         self.current_state = state
         self._store.save(state.to_dict())
+
+    def sync(self, objective: str, total_count: int, processed_count: int,
+             next_action: str, completion_gate: str = "",
+             remaining_queue: Optional[List[str]] = None) -> TaskState:
+        state = self.current_state or TaskState(
+            objective=objective,
+            completion_gate=completion_gate or "processed == total",
+            inventory_hash="",
+            total_count=max(total_count, 0),
+            processed_count=max(processed_count, 0),
+            remaining_queue=remaining_queue or [],
+            rename_map={},
+            last_error="",
+            recovery_instruction="",
+            next_action=next_action,
+            last_updated="",
+        )
+        state.objective = objective or state.objective
+        if completion_gate:
+            state.completion_gate = completion_gate
+        state.total_count = max(total_count, 0)
+        state.processed_count = max(processed_count, 0)
+        if remaining_queue is not None:
+            state.remaining_queue = remaining_queue
+            state.inventory_hash = TaskState.compute_inventory_hash(remaining_queue)
+        state.next_action = next_action
+        self.checkpoint(state)
+        return state
+
+    def mark_complete(self) -> Optional[TaskState]:
+        if not self.current_state:
+            return None
+        state = self.current_state
+        state.processed_count = max(state.processed_count, state.total_count)
+        state.remaining_queue = []
+        state.inventory_hash = TaskState.compute_inventory_hash([])
+        state.next_action = "Completed"
+        state.last_error = ""
+        self.checkpoint(state)
+        return state
 
     def load(self) -> Optional[TaskState]:
         data = self._store.load()

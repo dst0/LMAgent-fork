@@ -904,10 +904,19 @@ def run_agent(
                 is_complete, reason = True, "Plan completed"
 
             if is_complete:
+                if Config.ENABLE_TODO_TRACKING:
+                    sync = todo_mgr.complete_remaining("Server finalized remaining todos on completion.")
+                    if sync.get("updated"):
+                        emit("log", {"message": f"Server-completed {sync['updated']} remaining todo(s)"})
+                if Config.ENABLE_PLAN_ENFORCEMENT and plan_mgr.plan:
+                    sync = plan_mgr.complete_remaining()
+                    if sync.get("success") and sync.get("updated"):
+                        emit("log", {"message": f"Server-completed {sync['updated']} remaining plan step(s)"})
+                if task_state_mgr.current_state:
+                    task_state_mgr.mark_complete()
                 _stall_count = 0
                 emit("complete", {"reason": reason, "answer": final_answer})
-                _save_session("idle")
-                task_state_mgr.clear()
+                _save_session("completed")
                 if mode == "interactive":
                     print(colored(
                         "\n✅ Done. Ask a follow-up or give a new task.\n"
