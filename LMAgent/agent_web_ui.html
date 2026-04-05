@@ -1031,7 +1031,9 @@ function _makeThinkingBlock(text){
   var body = document.createElement('div'); body.className = 'tb-body'; body.textContent = text; el.appendChild(body);
   function refresh(){
     var raw = body.textContent || '';
-    var first = raw.split('\n')[0].slice(0, _THINKING_PREVIEW_LEN), multi = raw.length > first.length || raw.indexOf('\n') !== -1;
+    var firstLine = raw.split('\n')[0];
+    var first = firstLine.slice(0, _THINKING_PREVIEW_LEN);
+    var multi = firstLine.length > _THINKING_PREVIEW_LEN || raw.indexOf('\n') !== -1;
     var iter = el.dataset.iteration ? ' · iteration ' + el.dataset.iteration : '';
     var open = el.classList.contains('open');
     prev.textContent = open || !raw.trim() ? '💭 thinking…' + iter : '💭 ' + first + (multi ? '…' : '') + iter;
@@ -1424,7 +1426,7 @@ const ThinkingStream = (function(){
     Scroll.maybe();
   }
   function finalize(fullText){
-    if(fullText === null || fullText === undefined || fullText === ''){
+    if(!fullText){
       if(!block) return;
       if(!text.trim()){
         var wrap = block; block = null; text = '';
