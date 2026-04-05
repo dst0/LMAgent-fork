@@ -929,7 +929,7 @@ class TodoManager:
 
     def start_next_pending(self, notes: str = "") -> Optional[TodoItem]:
         if any(t.status == "in_progress" for t in self.todos):
-            return next((t for t in self.todos if t.status == "in_progress"), None)
+            return None
         item = next((t for t in self.todos if t.status == "pending"), None)
         if not item:
             return None

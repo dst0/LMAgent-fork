@@ -1161,7 +1161,7 @@ def _process_tool_calls(
             latest_todos = todo_mgr.list_all().get("todos", [])
         elif non_bookkeeping_success and pending and not in_progress:
             first = todo_mgr.start_next_pending("Server auto-sync selected next todo.")
-            if first:
+            if first is not None:
                 emit("log", {"message": f"Server-started todo #{first.id}"})
             latest_todos = todo_mgr.list_all().get("todos", [])
 
