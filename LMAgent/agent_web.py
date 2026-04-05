@@ -164,7 +164,7 @@ _SSL_KEY  = os.environ.get("AGENT_KEY",  "")
 
 _rate_data: dict = {}
 _rate_lock       = threading.Lock()
-_RATE_LIMIT      = 120
+_RATE_LIMIT      = 300
 _RATE_WINDOW     = 60.0
 
 

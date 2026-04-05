@@ -80,6 +80,22 @@ header{
   display:flex;flex-direction:column;gap:0;
   transition:background .15s;
 }
+.request-progress{
+  display:none;align-self:center;align-items:center;gap:8px;
+  margin:8px auto 4px;padding:5px 10px;border-radius:999px;
+  border:1px solid var(--border);background:rgba(18,24,38,.82);
+  color:var(--text3);font-size:10px;letter-spacing:.04em;
+  backdrop-filter:blur(4px);
+}
+.request-progress.show{display:inline-flex}
+.request-progress-label{font-family:var(--sans);text-transform:uppercase}
+.request-progress-dots{display:inline-flex;align-items:center;gap:4px}
+.request-progress-dots span{
+  width:4px;height:4px;border-radius:50%;background:var(--amber);
+  opacity:.22;animation:reqPulse 1.3s ease-in-out infinite;
+}
+.request-progress-dots span:nth-child(2){animation-delay:.16s}
+.request-progress-dots span:nth-child(3){animation-delay:.32s}
 #messages.drag-over{
   background:rgba(62,207,178,.03);
   outline:2px dashed rgba(62,207,178,.3);outline-offset:-6px;
@@ -282,6 +298,7 @@ header{
 .dot.done{background:var(--green)}
 .dot.err{background:var(--red)}
 @keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
+@keyframes reqPulse{0%,100%{opacity:.22;transform:none}50%{opacity:.9;transform:translateY(-1px)}}
 #status-text{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 #iter-badge{font-size:9px;border:1px solid var(--border);border-radius:3px;padding:1px 5px;display:none}
 #mode-badge{font-size:9px;border:1px solid var(--border);border-radius:3px;padding:1px 5px;color:var(--text3)}
@@ -606,6 +623,10 @@ header{
       <div class="empty-glyph">&#955;_</div>
       <p>Send a message to start working</p>
       <div class="hint">/ commands &nbsp;·&nbsp; ↑↓ history &nbsp;·&nbsp; drag image</div>
+    </div>
+    <div class="request-progress" id="request-progress" aria-live="polite" aria-hidden="true">
+      <span class="request-progress-label">Working</span>
+      <span class="request-progress-dots" aria-hidden="true"><span></span><span></span><span></span></span>
     </div>
   </div>
 
@@ -1235,18 +1256,27 @@ function _finaliseToolGroup(group, total){
 const Messages = (function(){
   var pane = function(){ return document.getElementById('messages'); };
   function hideEmpty(){ var e = document.getElementById('empty'); if(e) e.remove(); }
+  function progressEl(){ return document.getElementById('request-progress'); }
+  function showProgress(show){
+    var el = progressEl(); if(!el) return;
+    el.classList.toggle('show', !!show);
+    el.setAttribute('aria-hidden', show ? 'false' : 'true');
+    if(show){ pane().appendChild(el); }
+  }
   function add(role, html, extra, asHtml){
     hideEmpty(); Tools.endGroup();
+    var progress = progressEl(), keepProgress = !!(progress && progress.classList.contains('show'));
     var d = document.createElement('div'); d.className = 'msg ' + role + (extra ? ' ' + extra : '');
     var labels = {user:'You', agent:'Agent'};
     d.innerHTML = '<div class="msg-label">' + (labels[role] || '') + '</div><div class="msg-body"></div>';
     pane().appendChild(d);
+    if(keepProgress) pane().appendChild(progress);
     var body = d.querySelector('.msg-body');
     if(html){ if(asHtml) body.innerHTML = html; else body.textContent = html; }
     Scroll.maybe(); return body;
   }
   function sys(text, variant){ add('sys', text, variant || ''); }
-  return {add, sys, pane, hideEmpty};
+  return {add, sys, pane, hideEmpty, showProgress};
 })();
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1596,6 +1626,7 @@ const Agent = (function(){
 
   function transition(next){
     state = next; lockUI(next !== 'idle');
+    Messages.showProgress(next === 'running');
     if(next === 'idle') Scroll.pin(); Scroll.update();
     next !== 'idle' ? ElapsedTimer.start() : ElapsedTimer.stop();
   }
@@ -1702,6 +1733,7 @@ const Agent = (function(){
 
   function _onDone(reason){
     Stream.finalize(); Tools.endGroup(); Status.iter('');
+    Messages.showProgress(false);
     var isWait = String(reason || '').startsWith('waiting'), isErr = reason === 'error' || reason === 'stopped';
     if(isWait){
       transition('waiting'); Status.set('waiting — will resume automatically', 'wait');
@@ -1722,13 +1754,14 @@ const Agent = (function(){
       var imgEl = document.createElement('img'); imgEl.className = 'msg-img'; imgEl.src = img.previewURL; imgEl.alt = 'image';
       body.appendChild(imgEl); imgEl.onload = function(){ URL.revokeObjectURL(img.previewURL); };
     }
-    Scroll.pin(); transition('running'); Status.set('thinking…', 'run'); Tools.reset(); _hadContent = false;
+    Scroll.pin(); transition('running'); Status.set('thinking…', 'run'); Tools.reset(); _hadContent = false; Messages.showProgress(true);
     requestId = 'r' + Date.now() + Math.random().toString(36).slice(2,6);
     try{
       var resp = await fetch('/chat', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({message:fullText, session_id:sessionId, request_id:requestId})});
       if(!resp.ok){ var err = await resp.json().catch(function(){ return {error:'HTTP ' + resp.status}; }); throw new Error(err.error || 'HTTP ' + resp.status); }
     }catch(err){
       Stream.finalize(); Tools.endGroup();
+      Messages.showProgress(false);
       Messages.sys('Failed to send: ' + err.message, 'err');
       transition('idle'); Status.set('error', 'err'); Status.iter('');
     }
@@ -1742,6 +1775,7 @@ const Agent = (function(){
     if(state !== 'running') return;
     // Optimistically freeze the UI immediately — don't wait for SSE confirmation
     Stream.reset(); Tools.endGroup();
+    Messages.showProgress(false);
     transition('idle'); Status.set('stopped — send a message to resume','');
     Status.iter(''); Messages.sys('— stopped (session saved — send a message to resume) —', 'warn');
     if(requestId){
@@ -1755,7 +1789,7 @@ const Agent = (function(){
     try{ await fetch('/new', {method:'POST'}); }catch(_){}
     sessionId = requestId = null; _hadContent = false; setSession(null);
     Tools.reset(); Stream.reset(); ImageUpload.clear();
-    document.getElementById('messages').innerHTML = '<div id="replay-banner"></div><div id="empty"><div class="empty-glyph">λ_</div><p>Send a message to start working</p><div class="hint">/ commands &nbsp;·&nbsp; ↑↓ history &nbsp;·&nbsp; drag image</div></div>';
+    document.getElementById('messages').innerHTML = '<div id="replay-banner"></div><div id="empty"><div class="empty-glyph">λ_</div><p>Send a message to start working</p><div class="hint">/ commands &nbsp;·&nbsp; ↑↓ history &nbsp;·&nbsp; drag image</div></div><div class="request-progress" id="request-progress" aria-live="polite" aria-hidden="true"><span class="request-progress-label">Working</span><span class="request-progress-dots" aria-hidden="true"><span></span><span></span><span></span></span></div>';
     Status.set('ready',''); Status.iter(''); document.getElementById('msg-input').focus();
   }
 
