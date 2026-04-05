@@ -1282,7 +1282,7 @@ const LiveActivity = (function(){
   function setProgress(data){
     data = data || {};
     var nextIteration = Number(data.iteration) || 0;
-    if(state.alertIteration && nextIteration > state.alertIteration){
+    if(state.alertIteration !== 0 && nextIteration > state.alertIteration){
       state.alert = '';
       state.alertIteration = 0;
     }

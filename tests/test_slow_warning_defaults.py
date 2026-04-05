@@ -26,7 +26,7 @@ class SlowWarningDefaultsTests(unittest.TestCase):
 
         self.assertIn("alertIteration: 0", content)
         self.assertIn("state.alertIteration = Number(data.iteration) || 0;", content)
-        self.assertIn("if(state.alertIteration && nextIteration > state.alertIteration){", content)
+        self.assertIn("if(state.alertIteration !== 0 && nextIteration > state.alertIteration){", content)
         self.assertIn("state.alert = '';", content)
 
     def test_idle_nudge_waits_longer_before_warning(self):
