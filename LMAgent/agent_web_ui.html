@@ -2127,12 +2127,13 @@ const Sessions = (function(){
 const SessionInspect = (function(){
   var _sid = null, _autoTimer = null, _followCurrent = true;
   var _fetchPromise = null, _queuedSid = null, _hasSnapshot = false;
+  var _SECTION_BODY_IDS = ['si-todos-body','si-tasks-body','si-plan-body','si-history-body'];
 
   function _setSid(id){
     if(id !== _sid){
       _hasSnapshot = false;
       _setRefreshStatus('');
-      ['si-todos-body','si-tasks-body','si-plan-body','si-history-body'].forEach(function(bodyId){
+      _SECTION_BODY_IDS.forEach(function(bodyId){
         var el = document.getElementById(bodyId);
         if(el) el.innerHTML = '<div class="si-empty">' + (id ? 'Loading…' : 'No active session') + '</div>';
       });
@@ -2294,7 +2295,7 @@ const SessionInspect = (function(){
 
   function _renderFetchError(msg){
     var html = '<div class="si-empty">⚠ ' + _esc(msg) + '</div>';
-    ['si-todos-body','si-tasks-body','si-plan-body','si-history-body'].forEach(function(id){
+    _SECTION_BODY_IDS.forEach(function(id){
       var el = document.getElementById(id); if(el) el.innerHTML = html;
     });
   }
@@ -2332,7 +2333,7 @@ const SessionInspect = (function(){
           var msg = String(e && (e.message || e) || 'refresh failed');
           if(_hasSnapshot){
             var refreshMsg = e && e.rateLimited
-              ? 'Status refresh paused briefly after rate limiting; retrying…'
+              ? 'Status refresh paused briefly after rate-limiting; retrying…'
               : ('Status refresh failed: ' + msg);
             _setRefreshStatus(refreshMsg, true);
             continue;
