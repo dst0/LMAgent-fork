@@ -737,13 +737,13 @@ header{
   <div class="panel-hdr">
     <span>Status</span>
     <div style="display:flex;gap:4px;align-items:center">
-      <button class="ft-icon-btn" onclick="SessionInspect.refresh()" title="Refresh">⟳</button>
+      <button class="ft-icon-btn" onclick="SessionInspect.refresh(true)" title="Refresh">⟳</button>
       <button class="btn" onclick="UI.closeInspect()">✕</button>
     </div>
   </div>
   <div class="si-refresh-row">
     <span class="si-session-label" id="si-session-label">No active session</span>
-    <span class="si-refresh-btn" onclick="SessionInspect.refresh()">⟳ refresh</span>
+    <span class="si-refresh-btn" onclick="SessionInspect.refresh(true)">⟳ refresh</span>
   </div>
   <div class="si-refresh-status" id="si-refresh-status"></div>
   <div id="si-body">
@@ -2457,6 +2457,41 @@ const SessionInspect = (function(){
   var _version = '-1';
   var _SECTION_BODY_IDS = ['si-todos-body','si-tasks-body','si-plan-body','si-history-body'];
 
+  function _panel(){
+    return document.getElementById('session-inspect-panel');
+  }
+
+  function _isPanelOpen(){
+    var panel = _panel();
+    return !!(panel && panel.classList.contains('open'));
+  }
+
+  function _ensureOpen(){
+    var panel = _panel();
+    if(!panel || panel.classList.contains('open')) return;
+    if(typeof UI !== 'undefined' && UI.closeAll) UI.closeAll();
+    panel.classList.add('open');
+    var overlay = document.getElementById('overlay');
+    if(overlay) overlay.classList.add('show');
+  }
+
+  function _followSession(id, autoOpen){
+    if(!id){
+      _setSid(null);
+      return;
+    }
+    _followCurrent = true;
+    _setSid(id);
+    if(autoOpen) _ensureOpen();
+    _fetchAll(id);
+  }
+
+  function _effectiveSid(){
+    var currentSid = Agent.getSession();
+    if(_followCurrent) return currentSid || _sid || null;
+    return _sid || null;
+  }
+
   function _setSid(id){
     if(id !== _sid){
       _hasSnapshot = false;
@@ -2715,9 +2750,10 @@ const SessionInspect = (function(){
     _lastRefresh = Date.now();
   }
 
-  function refresh(){
+  function refresh(force){
     _lastRefresh = Date.now();
-    var sid = _followCurrent ? Agent.getSession() : (_sid || Agent.getSession());
+    if(force === true) _version = '-1';
+    var sid = _effectiveSid();
     if(sid !== _sid) _setSid(sid);
     _fetchAll(sid);
   }
@@ -2730,18 +2766,29 @@ const SessionInspect = (function(){
 
   // Called by Agent.handleEvent for real-time updates
   function onEvent(evt){
-    var sid = _sid || Agent.getSession();
+    if(evt.type === 'connect'){
+      var connectSid = evt.data && evt.data.session;
+      var connectState = evt.data && evt.data.state;
+      if(connectSid && (connectState === 'running' || connectState === 'waiting')){
+        _followSession(connectSid, true);
+      } else if(_followCurrent){
+        _setSid(connectSid || null);
+      }
+      return;
+    }
+    if(evt.type === 'session'){
+      _followSession(evt.data || null, !!evt.data);
+      return;
+    }
+
+    var sid = _effectiveSid();
     if(!sid) return;
-    var panel = document.getElementById('session-inspect-panel');
-    var panelOpen = panel && panel.classList.contains('open');
-    if(!panelOpen) return;
 
     if(evt.type === 'plan'){
       _renderPlan({plan: typeof evt.data === 'object' ? evt.data : null});
       _lastRefresh = Date.now();
     } else if(evt.type === 'session_inspect'){
       var pushedSid = evt.data && evt.data.session_id;
-      if(_followCurrent) sid = Agent.getSession();
       if(pushedSid && sid && pushedSid === sid && evt.data.snapshot){
         _applySnapshot(evt.data.snapshot);
       }
@@ -2754,17 +2801,13 @@ const SessionInspect = (function(){
       _lastRefresh = Date.now();
     } else if(evt.type === 'done' || evt.type === 'complete'){
       _lastRefresh = Date.now();
-    } else if(evt.type === 'session'){
-      var newSid = evt.data;
-      if(_followCurrent && newSid && newSid !== _sid){ _setSid(newSid); _fetchAll(newSid); }
     }
   }
 
   function _startAutoRefresh(){
     if(_autoTimer) clearInterval(_autoTimer);
     _autoTimer = setInterval(function(){
-      var panel = document.getElementById('session-inspect-panel');
-      if(!panel || !panel.classList.contains('open')) return;
+      if(!_isPanelOpen()) return;
       // Push updates arrive over SSE now; this is only a slow fallback if an event is missed.
       var interval = Agent.running() ? 15000 : 30000;
       if((Date.now() - _lastRefresh) >= interval) refresh();
@@ -2872,17 +2915,12 @@ const UI = (function(){
     toggleSessions:  function(){ _toggle('sessions-panel',         function(){ Sessions.load(); }); },
     toggleTools:     function(){ _toggle('tools-panel',            function(){ ToolsPanel.load(); }); },
     toggleMessaging: function(){ _toggle('messaging-panel',        function(){ Messaging.refresh(); }); },
-    toggleInspect:   function(){
-      var p = document.getElementById('session-inspect-panel');
-      if(!p) return;
-      if(p.classList.contains('open')){ _closePanel('session-inspect-panel'); }
-      else { closeAll(); p.classList.add('open'); SessionInspect.refresh(); }
-    },
+    toggleInspect:   function(){ _toggle('session-inspect-panel',  function(){ SessionInspect.refresh(true); }); },
     closeFiles:     function(){ _closePanel('files-panel');            overlay().classList.remove('show'); },
     closeSessions:  function(){ _closePanel('sessions-panel');         overlay().classList.remove('show'); },
     closeTools:     function(){ _closePanel('tools-panel');            overlay().classList.remove('show'); },
     closeMessaging: function(){ _closePanel('messaging-panel');        overlay().classList.remove('show'); },
-    closeInspect:   function(){ _closePanel('session-inspect-panel'); },
+    closeInspect:   function(){ _closePanel('session-inspect-panel');  overlay().classList.remove('show'); },
     closeAll,
   };
 })();
