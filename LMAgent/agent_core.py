@@ -161,8 +161,8 @@ class Config:
     LARGE_FILE_THRESHOLD  = int(os.getenv("LARGE_FILE_THRESHOLD",  "250000"))
     DEFAULT_READ_LINES    = int(os.getenv("DEFAULT_READ_LINES",    "220"))
     OUTLINE_MAX_ITEMS     = int(os.getenv("OUTLINE_MAX_ITEMS",     "200"))
-    SLOW_LLM_CALL_SECONDS = float(os.getenv("SLOW_LLM_CALL_SECONDS", "12"))
-    SLOW_ITERATION_SECONDS = float(os.getenv("SLOW_ITERATION_SECONDS", "20"))
+    SLOW_LLM_CALL_SECONDS = float(os.getenv("SLOW_LLM_CALL_SECONDS", "30"))
+    SLOW_ITERATION_SECONDS = float(os.getenv("SLOW_ITERATION_SECONDS", "60"))
     # Features
     PERMISSION_MODE         = os.getenv("PERMISSION_MODE",         "normal")
     ENABLE_MCP              = _env_bool("ENABLE_MCP",              "true")
