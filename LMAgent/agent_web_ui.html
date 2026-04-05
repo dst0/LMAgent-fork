@@ -604,7 +604,8 @@ header{
 .mfe-more{color:var(--teal);font-size:9px;cursor:pointer;font-style:normal;font-family:var(--mono)}
 
 /* Overlay */
-#overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,.35);z-index:15;backdrop-filter:blur(1px)}
+#overlay{display:none;position:fixed;inset:0;background:transparent;z-index:15;backdrop-filter:none}
+#overlay.pass-through{pointer-events:none}
 #overlay.show{display:block}
 
 /* Replay banner */
@@ -2482,7 +2483,10 @@ const SessionInspect = (function(){
     if(typeof UI !== 'undefined' && UI.closeAll) UI.closeAll();
     panel.classList.add('open');
     var overlay = document.getElementById('overlay');
-    if(overlay) overlay.classList.add('show');
+    if(overlay){
+      overlay.classList.add('show');
+      overlay.classList.add('pass-through');
+    }
   }
 
   function _followSession(id, autoOpen){
@@ -2783,6 +2787,10 @@ const SessionInspect = (function(){
         _followSession(connectSid, true);
       } else if(_followCurrent){
         _setSid(connectSid || null);
+        if(connectSid){
+          _ensureOpen();
+          _fetchAll(connectSid);
+        }
       }
       return;
     }
@@ -2826,6 +2834,8 @@ const SessionInspect = (function(){
 
   function init(){
     _startAutoRefresh();
+    _ensureOpen();
+    refresh(true);
   }
 
   return {refresh, loadSession, toggleSection, expandHist, init, onEvent};
@@ -2915,9 +2925,22 @@ const Palette = (function(){
 const UI = (function(){
   var overlay = function(){ return document.getElementById('overlay'); };
   var ALL = ['files-panel','sessions-panel','tools-panel','messaging-panel','session-inspect-panel'];
-  function _openPanel(id){ document.getElementById(id).classList.add('open'); overlay().classList.add('show'); }
+  function _hideOverlay(){
+    var ov = overlay();
+    ov.classList.remove('show');
+    ov.classList.remove('pass-through');
+  }
+  function _openPanel(id){
+    document.getElementById(id).classList.add('open');
+    var ov = overlay();
+    ov.classList.add('show');
+    ov.classList.toggle('pass-through', id === 'session-inspect-panel');
+  }
   function _closePanel(id){ document.getElementById(id).classList.remove('open'); }
-  function closeAll(){ ALL.forEach(_closePanel); overlay().classList.remove('show'); }
+  function closeAll(){
+    ALL.forEach(_closePanel);
+    _hideOverlay();
+  }
   function _toggle(id, onOpen){ var p = document.getElementById(id); if(p.classList.contains('open')) closeAll(); else{ closeAll(); _openPanel(id); onOpen && onOpen(); } }
   document.addEventListener('keydown', function(e){ if(e.key === 'Escape' && !HTMLPreview.isOpen()) closeAll(); });
   return {
@@ -2926,11 +2949,11 @@ const UI = (function(){
     toggleTools:     function(){ _toggle('tools-panel',            function(){ ToolsPanel.load(); }); },
     toggleMessaging: function(){ _toggle('messaging-panel',        function(){ Messaging.refresh(); }); },
     toggleInspect:   function(){ _toggle('session-inspect-panel',  function(){ SessionInspect.refresh(true); }); },
-    closeFiles:     function(){ _closePanel('files-panel');            overlay().classList.remove('show'); },
-    closeSessions:  function(){ _closePanel('sessions-panel');         overlay().classList.remove('show'); },
-    closeTools:     function(){ _closePanel('tools-panel');            overlay().classList.remove('show'); },
-    closeMessaging: function(){ _closePanel('messaging-panel');        overlay().classList.remove('show'); },
-    closeInspect:   function(){ _closePanel('session-inspect-panel');  overlay().classList.remove('show'); },
+    closeFiles:     function(){ _closePanel('files-panel');            _hideOverlay(); },
+    closeSessions:  function(){ _closePanel('sessions-panel');         _hideOverlay(); },
+    closeTools:     function(){ _closePanel('tools-panel');            _hideOverlay(); },
+    closeMessaging: function(){ _closePanel('messaging-panel');        _hideOverlay(); },
+    closeInspect:   function(){ _closePanel('session-inspect-panel');  _hideOverlay(); },
     closeAll,
   };
 })();
