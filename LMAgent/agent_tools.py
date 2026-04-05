@@ -274,7 +274,7 @@ def _slice_lines(content: str, start_line: int, max_lines: int) -> Tuple[str, in
     total_lines = len(lines) or 1
     start = max(1, start_line or 1)
     if start > total_lines:
-        return "", total_lines, start, start - 1
+        return "", total_lines, start, total_lines
     if max_lines and max_lines > 0:
         end = min(total_lines, start + max_lines - 1)
     else:
@@ -463,7 +463,7 @@ def tool_read(
             "file_size": stat.st_size,
             "line_start": line_start,
             "line_end": line_end,
-            "returned_lines": max(0, line_end - line_start + 1),
+            "returned_lines": max(0, line_end - line_start + 1) if snippet else 0,
             "partial": partial,
             "truncated": truncated,
             "is_large": stat.st_size >= Config.LARGE_FILE_THRESHOLD,

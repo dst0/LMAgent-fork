@@ -721,11 +721,11 @@ def run_agent(
     if resume_session:
         loaded = task_state_mgr.load()
         if loaded:
-            if loaded.total_count > 0:
-                emit("log", {"message": (f"Task state loaded: "
-                                         f"{loaded.processed_count}/{loaded.total_count} processed")})
-            else:
-                emit("log", {"message": "Task state loaded: not initialized yet"})
+            emit("log", {"message": (
+                f"Task state loaded: {loaded.processed_count}/{loaded.total_count} processed"
+                if loaded.total_count > 0 else
+                "Task state loaded: not initialized yet"
+            )})
 
     if not resume_session and plan_first and plan_data:
         plan_mgr.create(plan_data)
