@@ -51,6 +51,15 @@ _llm_local = threading.local()
 _SUB_AGENT_TOOL_NAMES = frozenset({"write", "read", "edit", "ls", "glob", "grep", "shell"})
 _PLAN_TOOL_NAMES = frozenset({"ls", "read", "glob", "grep", "git_status"})
 _NO_USER_QUERY_ERR = "no user query found in messages"
+_ACTIVE_USER_REQUEST_TAG = "[ACTIVE USER REQUEST]"
+_AGENT_USER_NUDGE_PREFIXES = (
+    "⚠️ HARD STOP:",
+    "⚠️ LOOP DETECTED:",
+    "✅ ALL TODOS COMPLETE.",
+    "Your last ",
+    "You have responded with text but no tool calls multiple times.",
+    "Continue from the latest state and tool results.",
+)
 
 
 # =============================================================================
@@ -320,6 +329,74 @@ PLAN_APPROVED
 # LLM CLIENT
 # =============================================================================
 
+def _extract_task_state_objective(messages: List[Dict[str, Any]]) -> str:
+    for msg in reversed(messages):
+        if msg.get("role") != "system":
+            continue
+        content = str(msg.get("content", ""))
+        if "[TASK STATE - DO NOT SUMMARIZE]" not in content:
+            continue
+        for line in content.splitlines():
+            if line.startswith("OBJECTIVE:"):
+                return line.partition(":")[2].strip()
+    return ""
+
+
+def _is_agent_generated_user_nudge(content: str) -> bool:
+    stripped = content.strip()
+    if not stripped:
+        return True
+    if stripped.startswith(_ACTIVE_USER_REQUEST_TAG):
+        return True
+    return any(stripped.startswith(prefix) for prefix in _AGENT_USER_NUDGE_PREFIXES)
+
+
+def _find_active_user_request(messages: List[Dict[str, Any]]) -> str:
+    for msg in reversed(messages):
+        if msg.get("role") != "user":
+            continue
+        content = str(msg.get("content", "")).strip()
+        if content and not _is_agent_generated_user_nudge(content):
+            return content
+    return _extract_task_state_objective(messages)
+
+
+def _build_active_user_request_anchor(request_text: str) -> Dict[str, str]:
+    return {
+        "role": "user",
+        "content": (
+            f"{_ACTIVE_USER_REQUEST_TAG}\n"
+            f"{request_text}\n"
+            f"[END ACTIVE USER REQUEST]"
+        ),
+    }
+
+
+def _prepare_messages_for_payload(messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    if not messages:
+        return messages
+
+    active_request = _find_active_user_request(messages)
+    if not active_request:
+        return messages
+
+    insert_pos = 0
+    while insert_pos < len(messages) and messages[insert_pos].get("role") == "system":
+        insert_pos += 1
+
+    if insert_pos < len(messages):
+        first_non_system = messages[insert_pos]
+        if (first_non_system.get("role") == "user"
+                and str(first_non_system.get("content", "")).strip() == active_request):
+            return messages
+        if (first_non_system.get("role") == "user"
+                and str(first_non_system.get("content", "")).strip().startswith(_ACTIVE_USER_REQUEST_TAG)):
+            return messages
+
+    prepared = list(messages)
+    prepared.insert(insert_pos, _build_active_user_request_anchor(active_request))
+    return prepared
+
 class LLMClient:
     _HEADERS: Dict[str, str] = {"Content-Type": "application/json"}
 
@@ -354,8 +431,9 @@ class LLMClient:
     @classmethod
     def _build_payload(cls, messages: List[Dict[str, Any]],
                         tools: List[Dict[str, Any]]) -> Dict[str, Any]:
+        prepared_messages = _prepare_messages_for_payload(messages)
         payload: Dict[str, Any] = {
-            "messages":    messages,
+            "messages":    prepared_messages,
             "temperature": Config.TEMPERATURE,
             "stream":      True,
         }
