@@ -646,11 +646,17 @@ def _web_dispatch_bca_tool(fn_name, args, workspace, brief=None):
 
     if fn_name not in _BCA_SILENT_TOOLS:
         ok = result.get("success", False)
+        outcome = (
+            result.get("summary")
+            or result.get("message")
+            or result.get("status")
+            or (result.get("error", "") if not ok else "")
+        )
         _broadcast(("tool", {
             "phase": "result",
             "name": fn_name,
             "success": ok,
-            "outcome": str(result if ok else result.get("error", ""))[:200],
+            "outcome": str(outcome)[:200],
         }))
 
     return result

@@ -848,10 +848,9 @@ function _fmtOutcomeText(outcome){
 }
 
 function _setToolOutcome(row, outcome){
-  var text = outcome == null ? '' : String(outcome).trim();
-  row.dataset.outcome = text;
+  row.dataset.outcome = outcome == null ? '' : String(outcome).trim();
   var el = row.querySelector('.tr-outcome');
-  if(!text){
+  if(!row.dataset.outcome){
     if(el) el.remove();
     return;
   }
@@ -860,8 +859,8 @@ function _setToolOutcome(row, outcome){
     el.className = 'tr-outcome';
     row.appendChild(el);
   }
-  el.textContent = '→ ' + _fmtOutcomeText(text);
-  el.title = text;
+  el.textContent = '→ ' + _fmtOutcomeText(row.dataset.outcome);
+  el.title = row.dataset.outcome;
 }
 
 function _renderToolDetail(row, detail){
