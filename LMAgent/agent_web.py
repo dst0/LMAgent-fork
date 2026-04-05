@@ -1016,9 +1016,11 @@ class _AgentStopped(BaseException):
 
 def _make_thinking_helpers():
     buf = [""]
+    live_started = [False]
 
     def flush_thinking() -> None:
         text = buf[0].strip()
+        live_started[0] = False
         if text:
             _broadcast(("thinking", text))
         buf[0] = ""
@@ -1027,7 +1029,11 @@ def _make_thinking_helpers():
         if part is None:
             flush_thinking()
         else:
+            if not live_started[0]:
+                _broadcast(("thinking_live", {"phase": "start"}))
+                live_started[0] = True
             buf[0] += part
+            _broadcast(("thinking_live", {"phase": "delta", "text": part}))
 
     return thinking_cb, flush_thinking
 
