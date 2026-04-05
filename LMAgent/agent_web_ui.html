@@ -2488,8 +2488,8 @@ const SessionInspect = (function(){
 
   function _effectiveSid(){
     var currentSid = Agent.getSession();
-    if(_followCurrent) return currentSid || null;
-    return _sid || currentSid;
+    if(_followCurrent) return currentSid || _sid || null;
+    return _sid || null;
   }
 
   function _setSid(id){
@@ -2789,7 +2789,6 @@ const SessionInspect = (function(){
       _lastRefresh = Date.now();
     } else if(evt.type === 'session_inspect'){
       var pushedSid = evt.data && evt.data.session_id;
-      if(_followCurrent) sid = Agent.getSession() || _sid;
       if(pushedSid && sid && pushedSid === sid && evt.data.snapshot){
         _applySnapshot(evt.data.snapshot);
       }
