@@ -193,6 +193,24 @@ header{
 .thinking-block .tb-body{display:none;white-space:pre-wrap;word-break:break-word;margin-top:5px;color:var(--text3);line-height:1.55}
 .thinking-block.open .tb-body{display:block}
 
+/* Agent step collapse */
+.msg-step-hdr{display:flex;align-items:center;gap:5px;cursor:pointer;padding:2px 0 6px;user-select:none}
+.msg-step-hdr:hover .msg-step-preview{color:var(--text)}
+.msg-step-hdr:hover .msg-step-arrow{color:var(--teal2)}
+.msg-step-arrow{font-size:8px;color:var(--teal);transition:transform .15s;flex-shrink:0;display:inline-block}
+.msg.agent.step-collapsed .msg-step-arrow{transform:rotate(-90deg)}
+.msg-step-preview{font-size:11px;color:var(--text2);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:var(--sans);font-style:italic}
+.msg.agent.step-collapsed .msg-body{display:none}
+.msg.agent.step-collapsed .msg-copy{display:none!important}
+
+/* Expandable tool row */
+.tr-expandable{cursor:pointer;border-radius:3px;transition:background .08s}
+.tr-expandable:hover{background:rgba(255,255,255,.025)}
+.tr-detail{display:none;padding:3px 0 4px 25px;font-size:10px;font-family:var(--mono);color:var(--text2);white-space:pre-wrap;word-break:break-word;line-height:1.5;animation:fadeUp .1s ease both}
+.tr-detail.open{display:block}
+.tr-detail-lbl{font-size:8.5px;color:var(--text3);text-transform:uppercase;letter-spacing:.06em;margin-bottom:2px}
+.tool-group.collapsed .tool-row,.tool-group.collapsed .tool-more,.tool-group.collapsed .tr-detail{display:none!important}
+
 /* Copy button on agent messages */
 .msg-copy{
   position:absolute;top:28px;right:9px;
@@ -229,7 +247,6 @@ header{
 }
 .tool-group.collapsible .tool-group-summary:hover{color:var(--text2)}
 .tgs-arrow{font-size:8px;display:inline-block;transition:transform .15s}
-.tool-group.collapsed .tool-row,.tool-group.collapsed .tool-more{display:none!important}
 .tool-group.collapsed .tgs-arrow{transform:rotate(-90deg)}
 
 /* Cursor */
@@ -830,6 +847,51 @@ function _makeThinkingBlock(text){
   return el;
 }
 
+// Make a long agent message collapsible with a short preview header.
+function _makeStepCollapsible(wrap, raw){
+  var THRESHOLD = 160;
+  if(!raw || raw.trim().length < THRESHOLD) return;
+  var lines = raw.trim().split('\n');
+  var firstLine = '';
+  for(var li = 0; li < lines.length; li++){
+    var l = lines[li].trim();
+    if(l){ firstLine = l.replace(/^#+\s*|\*\*|\*|`/g,''); break; }
+  }
+  if(!firstLine) return;
+  var preview = firstLine.slice(0, 120) + (firstLine.length > 120 ? '…' : '');
+  var body = wrap.querySelector('.msg-body');
+  if(!body) return;
+  var arrow = document.createElement('span'); arrow.className = 'msg-step-arrow'; arrow.textContent = '▾';
+  var prev  = document.createElement('span'); prev.className  = 'msg-step-preview'; prev.textContent = preview;
+  var hdr   = document.createElement('div');  hdr.className   = 'msg-step-hdr'; hdr.title = 'Click to collapse/expand';
+  hdr.appendChild(arrow); hdr.appendChild(prev);
+  wrap.insertBefore(hdr, body);
+  hdr.onclick = function(){
+    var c = wrap.classList.toggle('step-collapsed');
+    arrow.textContent = c ? '▶' : '▾';
+  };
+}
+
+// Make a tool row clickable to reveal its full arguments.
+function _makeToolRowExpandable(row, fullArgs){
+  if(!fullArgs) return;
+  row.classList.add('tr-expandable');
+  row.onclick = function(){
+    var next = row.nextSibling;
+    if(next && next.classList && next.classList.contains('tr-detail')){
+      next.classList.toggle('open');
+    } else {
+      var det = document.createElement('div'); det.className = 'tr-detail open';
+      var lbl = document.createElement('div'); lbl.className = 'tr-detail-lbl'; lbl.textContent = 'args';
+      var txt = document.createElement('div');
+      try{ txt.textContent = JSON.stringify(JSON.parse(fullArgs), null, 2); }
+      catch(e){ txt.textContent = fullArgs; }
+      det.appendChild(lbl); det.appendChild(txt);
+      row.parentNode.insertBefore(det, row.nextSibling);
+    }
+  };
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // MARKDOWN
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1039,7 +1101,7 @@ const Stream = (function(){
     requestAnimationFrame(function(){
       var wrap = body.closest('.msg');
       if(!raw.trim()){ if(wrap) wrap.remove(); }
-      else{ body.innerHTML = MD.render(raw) || _esc(raw); if(wrap) _attachCopyBtn(wrap, raw); }
+      else{ body.innerHTML = MD.render(raw) || _esc(raw); if(wrap){ _attachCopyBtn(wrap, raw); _makeStepCollapsible(wrap, raw); } }
       Scroll.maybe();
     });
   }
@@ -1069,6 +1131,7 @@ const Tools = (function(){
     var pv = args ? (args.slice(0,MAX_ARGS_DISPLAY_LENGTH) + (args.length > MAX_ARGS_DISPLAY_LENGTH ? '…' : '')) : '';
     var titleAttr = args && args.length > MAX_ARGS_DISPLAY_LENGTH ? ' title="' + _esc(args) + '"' : '';
     row.innerHTML = '<span class="tr-icon">◌</span><span class="tr-name">' + _esc(name) + '</span>' + (pv ? '<span class="tr-args"' + titleAttr + '>(' + _esc(pv) + ')</span>' : '');
+    _makeToolRowExpandable(row, args);
     if(!pending.has(name)) pending.set(name, []);
     pending.get(name).push(row); return row;
   }
@@ -1113,7 +1176,7 @@ const Replay = (function(){
       hideEmpty(); var wrap = document.createElement('div'); wrap.className = 'msg agent';
       wrap.innerHTML = '<div class="msg-label">Agent</div><div class="msg-body"></div>';
       var body = wrap.querySelector('.msg-body'); body.innerHTML = MD.render(tokBuf) || _esc(tokBuf);
-      _addCopyBtn(wrap, tokBuf); pane.appendChild(wrap); tokBuf = '';
+      var raw = tokBuf; _addCopyBtn(wrap, raw); _makeStepCollapsible(wrap, raw); pane.appendChild(wrap); tokBuf = '';
     }
     function flushTools(){
       if(!toolItems.length) return; hideEmpty();
@@ -1123,6 +1186,7 @@ const Replay = (function(){
         var pv = t.args ? (t.args.slice(0,MAX_ARGS_DISPLAY_LENGTH) + (t.args.length > MAX_ARGS_DISPLAY_LENGTH ? '…' : '')) : '';
         var titleAttr = t.args && t.args.length > MAX_ARGS_DISPLAY_LENGTH ? ' title="' + _esc(t.args) + '"' : '';
         row.innerHTML = '<span class="tr-icon">' + (t.ok === null ? '◌' : (t.ok ? '✓' : '✗')) + '</span><span class="tr-name">' + _esc(t.name) + '</span>' + (pv ? '<span class="tr-args"' + titleAttr + '>(' + _esc(pv) + ')</span>' : '');
+        _makeToolRowExpandable(row, t.args);
         g.appendChild(row);
       });
       _finaliseToolGroup(g, toolItems.length); pane.appendChild(g); toolItems = [];
