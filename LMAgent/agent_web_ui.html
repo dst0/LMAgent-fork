@@ -1023,12 +1023,21 @@ function _makePlanBlock(plan){
 const _THINKING_PREVIEW_LEN = 120;
 
 function _makeThinkingBlock(text){
-  var el = document.createElement('div'); el.className = 'thinking-block open';
-  var hdr = document.createElement('div'); hdr.className = 'tb-header';
-  var arrow = document.createElement('span'); arrow.className = 'tb-arrow'; arrow.textContent = '▾';
+  var el = document.createElement('div');
+  el.className = 'thinking-block open';
+  var hdr = document.createElement('div');
+  hdr.className = 'tb-header';
+  var arrow = document.createElement('span');
+  arrow.className = 'tb-arrow';
+  arrow.textContent = '▾';
   var prev = document.createElement('span'); prev.className = 'tb-preview';
-  hdr.appendChild(arrow); hdr.appendChild(prev); el.appendChild(hdr);
-  var body = document.createElement('div'); body.className = 'tb-body'; body.textContent = text; el.appendChild(body);
+  hdr.appendChild(arrow);
+  hdr.appendChild(prev);
+  el.appendChild(hdr);
+  var body = document.createElement('div');
+  body.className = 'tb-body';
+  body.textContent = text;
+  el.appendChild(body);
   function refresh(){
     var raw = body.textContent || '';
     var firstLine = raw.split('\n')[0];
@@ -1039,11 +1048,22 @@ function _makeThinkingBlock(text){
     prev.textContent = open || !raw.trim() ? '💭 thinking…' + iter : '💭 ' + first + (multi ? '…' : '') + iter;
   }
   el.onclick = function(){
-    var open = el.classList.toggle('open'); arrow.textContent = open ? '▾' : '▶'; refresh();
+    var open = el.classList.toggle('open');
+    arrow.textContent = open ? '▾' : '▶';
+    refresh();
   };
-  el._setThinkingText = function(next){ body.textContent = next || ''; refresh(); };
-  el._appendThinkingText = function(next){ body.textContent += next || ''; refresh(); };
-  el._setThinkingIteration = function(iter){ el.dataset.iteration = iter || ''; refresh(); };
+  el._setThinkingText = function(next){
+    body.textContent = next || '';
+    refresh();
+  };
+  el._appendThinkingText = function(next){
+    body.textContent += next || '';
+    refresh();
+  };
+  el._setThinkingIteration = function(iter){
+    el.dataset.iteration = iter || '';
+    refresh();
+  };
   refresh();
   return el;
 }
@@ -1429,8 +1449,10 @@ const ThinkingStream = (function(){
     if(!fullText){
       if(!block) return;
       if(!text.trim()){
-        var wrap = block; block = null; text = '';
-        if(wrap && wrap.parentNode) wrap.parentNode.removeChild(wrap);
+        var oldBlock = block;
+        block = null;
+        text = '';
+        if(oldBlock && oldBlock.parentNode) oldBlock.parentNode.removeChild(oldBlock);
         return;
       }
       fullText = text;
