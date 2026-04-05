@@ -2461,7 +2461,7 @@ const SessionInspect = (function(){
     return document.getElementById('session-inspect-panel');
   }
 
-  function _isOpen(){
+  function _isPanelOpen(){
     var panel = _panel();
     return !!(panel && panel.classList.contains('open'));
   }
@@ -2476,11 +2476,19 @@ const SessionInspect = (function(){
   }
 
   function _followSession(id, autoOpen){
+    if(!id){
+      _setSid(null);
+      return;
+    }
     _followCurrent = true;
-    _setSid(id || null);
-    if(!id) return;
+    _setSid(id);
     if(autoOpen) _ensureOpen();
     _fetchAll(id);
+  }
+
+  function _effectiveSid(){
+    if(_followCurrent) return Agent.getSession() || _sid;
+    return _sid || Agent.getSession();
   }
 
   function _setSid(id){
@@ -2744,7 +2752,7 @@ const SessionInspect = (function(){
   function refresh(force){
     _lastRefresh = Date.now();
     if(force === true) _version = '-1';
-    var sid = _followCurrent ? Agent.getSession() : (_sid || Agent.getSession());
+    var sid = _effectiveSid();
     if(sid !== _sid) _setSid(sid);
     _fetchAll(sid);
   }
@@ -2772,7 +2780,7 @@ const SessionInspect = (function(){
       return;
     }
 
-    var sid = _followCurrent ? (Agent.getSession() || _sid) : (_sid || Agent.getSession());
+    var sid = _effectiveSid();
     if(!sid) return;
 
     if(evt.type === 'plan'){
@@ -2780,7 +2788,7 @@ const SessionInspect = (function(){
       _lastRefresh = Date.now();
     } else if(evt.type === 'session_inspect'){
       var pushedSid = evt.data && evt.data.session_id;
-      if(_followCurrent) sid = Agent.getSession();
+      if(_followCurrent) sid = Agent.getSession() || _sid;
       if(pushedSid && sid && pushedSid === sid && evt.data.snapshot){
         _applySnapshot(evt.data.snapshot);
       }
@@ -2799,7 +2807,7 @@ const SessionInspect = (function(){
   function _startAutoRefresh(){
     if(_autoTimer) clearInterval(_autoTimer);
     _autoTimer = setInterval(function(){
-      if(!_isOpen()) return;
+      if(!_isPanelOpen()) return;
       // Push updates arrive over SSE now; this is only a slow fallback if an event is missed.
       var interval = Agent.running() ? 15000 : 30000;
       if((Date.now() - _lastRefresh) >= interval) refresh(false);
