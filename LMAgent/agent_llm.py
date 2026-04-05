@@ -1092,30 +1092,36 @@ def _process_tool_calls(
 
         _append_tool_message(fn_name, tc_id, result)
 
-    if non_bookkeeping_success and todo_op_count == 0:
-        todo_mgr = get_current_context().get("todo_manager")
-        if todo_mgr:
-            todos = todo_mgr.list_all().get("todos", [])
-            in_progress = any(t.get("status") == "in_progress" for t in todos)
-            pending = [t for t in todos if t.get("status") == "pending"]
-            if pending and not in_progress:
-                first = pending[0]
-                _run_auto_tool(
-                    "todo_update",
-                    {
-                        "todo_id": first.get("id"),
-                        "status": "in_progress",
-                        "notes": "Auto-started after successful work tool execution.",
-                    },
-                    f"tc_{iteration}_auto_todo_update",
-                )
-                emit("log", {"message": f"Auto-marked todo #{first.get('id')} as in_progress"})
+    ctx = get_current_context()
+    todo_mgr = ctx.get("todo_manager")
+    state_mgr = ctx.get("task_state_manager")
+    should_reconcile = bool(
+        non_bookkeeping_success or todo_op_count > 0 or task_op_called or work_progressed
+    )
 
-    if work_progressed and not task_op_called:
-        state_mgr = get_current_context().get("task_state_manager")
-        if state_mgr and not state_mgr.current_state:
+    latest_todos: List[Dict[str, Any]] = []
+    if todo_mgr and should_reconcile:
+        latest_todos = todo_mgr.list_all().get("todos", [])
+        in_progress = [t for t in latest_todos if t.get("status") == "in_progress"]
+        pending = [t for t in latest_todos if t.get("status") == "pending"]
+        if non_bookkeeping_success and pending and not in_progress:
+            first = pending[0]
+            _run_auto_tool(
+                "todo_update",
+                {
+                    "todo_id": first.get("id"),
+                    "status": "in_progress",
+                    "notes": "Server auto-sync after successful execution step.",
+                },
+                f"tc_{iteration}_auto_todo_update",
+            )
+            emit("log", {"message": f"Server-synced todo #{first.get('id')} to in_progress"})
+            latest_todos = todo_mgr.list_all().get("todos", [])
+
+    if state_mgr and should_reconcile:
+        if not state_mgr.current_state:
             state_mgr.load()
-        state = state_mgr.current_state if state_mgr else None
+        state = state_mgr.current_state
         objective = state.objective if state and state.objective else next(
             (
                 str(m.get("content", "")).strip()
@@ -1124,19 +1130,42 @@ def _process_tool_calls(
             ),
             "Complete the current task",
         )
-        processed = int(state.processed_count) if state else 0
-        total = int(state.total_count) if state else 0
-        _run_auto_tool(
-            "task_state_update",
-            {
-                "objective": objective,
-                "total_count": total,
-                "processed_count": processed,
-                "next_action": "Continue execution with remaining required steps.",
-            },
-            f"tc_{iteration}_auto_task_state",
+
+        if latest_todos:
+            total = len(latest_todos)
+            processed = sum(1 for t in latest_todos if t.get("status") == "completed")
+            active = next(
+                (t for t in latest_todos if t.get("status") in ("in_progress", "pending")),
+                None,
+            )
+            next_action = (
+                f"Continue: {active.get('description', '')}"
+                if active else "All tracked todos completed; verify deliverable and finish."
+            )
+        else:
+            total = int(state.total_count) if state else 0
+            processed = int(state.processed_count) if state else 0
+            next_action = "Continue execution with remaining required steps."
+
+        needs_update = (
+            not state
+            or state.objective != objective
+            or int(state.total_count) != total
+            or int(state.processed_count) != processed
+            or state.next_action != next_action
         )
-        emit("log", {"message": "Auto-checkpointed task state after work progress"})
+        if needs_update:
+            _run_auto_tool(
+                "task_state_update",
+                {
+                    "objective": objective,
+                    "total_count": total,
+                    "processed_count": processed,
+                    "next_action": next_action,
+                },
+                f"tc_{iteration}_auto_task_state",
+            )
+            emit("log", {"message": "Server-synced task state checkpoint"})
 
     if todo_op_count > 0 and todo_op_count == total_calls:
         todo_mgr = get_current_context().get("todo_manager")
