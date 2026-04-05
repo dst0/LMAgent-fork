@@ -2919,6 +2919,11 @@ const Palette = (function(){
 const UI = (function(){
   var overlay = function(){ return document.getElementById('overlay'); };
   var ALL = ['files-panel','sessions-panel','tools-panel','messaging-panel','session-inspect-panel'];
+  function _hideOverlay(){
+    var ov = overlay();
+    ov.classList.remove('show');
+    ov.classList.remove('pass-through');
+  }
   function _openPanel(id){
     document.getElementById(id).classList.add('open');
     var ov = overlay();
@@ -2928,9 +2933,7 @@ const UI = (function(){
   function _closePanel(id){ document.getElementById(id).classList.remove('open'); }
   function closeAll(){
     ALL.forEach(_closePanel);
-    var ov = overlay();
-    ov.classList.remove('show');
-    ov.classList.remove('pass-through');
+    _hideOverlay();
   }
   function _toggle(id, onOpen){ var p = document.getElementById(id); if(p.classList.contains('open')) closeAll(); else{ closeAll(); _openPanel(id); onOpen && onOpen(); } }
   document.addEventListener('keydown', function(e){ if(e.key === 'Escape' && !HTMLPreview.isOpen()) closeAll(); });
@@ -2940,11 +2943,11 @@ const UI = (function(){
     toggleTools:     function(){ _toggle('tools-panel',            function(){ ToolsPanel.load(); }); },
     toggleMessaging: function(){ _toggle('messaging-panel',        function(){ Messaging.refresh(); }); },
     toggleInspect:   function(){ _toggle('session-inspect-panel',  function(){ SessionInspect.refresh(true); }); },
-    closeFiles:     function(){ _closePanel('files-panel');            overlay().classList.remove('show'); overlay().classList.remove('pass-through'); },
-    closeSessions:  function(){ _closePanel('sessions-panel');         overlay().classList.remove('show'); overlay().classList.remove('pass-through'); },
-    closeTools:     function(){ _closePanel('tools-panel');            overlay().classList.remove('show'); overlay().classList.remove('pass-through'); },
-    closeMessaging: function(){ _closePanel('messaging-panel');        overlay().classList.remove('show'); overlay().classList.remove('pass-through'); },
-    closeInspect:   function(){ _closePanel('session-inspect-panel');  overlay().classList.remove('show'); overlay().classList.remove('pass-through'); },
+    closeFiles:     function(){ _closePanel('files-panel');            _hideOverlay(); },
+    closeSessions:  function(){ _closePanel('sessions-panel');         _hideOverlay(); },
+    closeTools:     function(){ _closePanel('tools-panel');            _hideOverlay(); },
+    closeMessaging: function(){ _closePanel('messaging-panel');        _hideOverlay(); },
+    closeInspect:   function(){ _closePanel('session-inspect-panel');  _hideOverlay(); },
     closeAll,
   };
 })();
