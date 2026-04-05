@@ -410,6 +410,24 @@ class LLMClient:
                         Config.LLM_URL, json=payload, headers=cls._headers(),
                         stream=True, timeout=Config.LLM_TIMEOUT,
                     )
+                if (resp.status_code == 400
+                        and "no user query found in messages" in (resp.text or "").lower()):
+                    Log.warning(
+                        "Model template rejected tool-heavy history (no user query) — "
+                        "retrying with compatibility user anchor"
+                    )
+                    patched_payload = dict(payload)
+                    patched_payload["messages"] = list(payload.get("messages") or []) + [{
+                        "role": "user",
+                        "content": (
+                            "Continue from the latest state and tool results. "
+                            "If the task is done, output TASK_COMPLETE."
+                        ),
+                    }]
+                    resp = requests.post(
+                        Config.LLM_URL, json=patched_payload, headers=cls._headers(),
+                        stream=True, timeout=Config.LLM_TIMEOUT,
+                    )
                 if resp.status_code in (500, 503):
                     Log.warning(f"LLM returned {resp.status_code} — waiting for recovery")
                     if cls._wait_for_server(60):
