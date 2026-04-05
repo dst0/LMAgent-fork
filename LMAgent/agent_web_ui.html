@@ -193,6 +193,24 @@ header{
 .thinking-block .tb-body{display:none;white-space:pre-wrap;word-break:break-word;margin-top:5px;color:var(--text3);line-height:1.55}
 .thinking-block.open .tb-body{display:block}
 
+/* Agent step collapse */
+.msg-step-hdr{display:flex;align-items:center;gap:5px;cursor:pointer;padding:2px 0 6px;user-select:none}
+.msg-step-hdr:hover .msg-step-preview{color:var(--text)}
+.msg-step-hdr:hover .msg-step-arrow{color:var(--teal2)}
+.msg-step-arrow{font-size:8px;color:var(--teal);transition:transform .15s;flex-shrink:0;display:inline-block}
+.msg.agent.step-collapsed .msg-step-arrow{transform:rotate(-90deg)}
+.msg-step-preview{font-size:11px;color:var(--text2);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:var(--sans);font-style:italic}
+.msg.agent.step-collapsed .msg-body{display:none}
+.msg.agent.step-collapsed .msg-copy{display:none!important}
+
+/* Expandable tool row */
+.tr-expandable{cursor:pointer;border-radius:3px;transition:background .08s}
+.tr-expandable:hover{background:rgba(255,255,255,.025)}
+.tr-detail{display:none;padding:3px 0 4px 25px;font-size:10px;font-family:var(--mono);color:var(--text2);white-space:pre-wrap;word-break:break-word;line-height:1.5;animation:fadeUp .1s ease both}
+.tr-detail.open{display:block}
+.tr-detail-lbl{font-size:8.5px;color:var(--text3);text-transform:uppercase;letter-spacing:.06em;margin-bottom:2px}
+.tool-group.collapsed .tool-row,.tool-group.collapsed .tool-more,.tool-group.collapsed .tr-detail{display:none!important}
+
 /* Copy button on agent messages */
 .msg-copy{
   position:absolute;top:28px;right:9px;
@@ -213,7 +231,9 @@ header{
   animation:fadeUp .1s ease both;font-family:var(--mono);
 }
 .tr-icon{width:10px;flex-shrink:0;font-size:9px;transition:color .2s}
+.tr-label{color:var(--text2);font-weight:500;font-family:var(--sans);font-size:11px}
 .tr-name{color:var(--text2);font-weight:500}
+.tool-row.has-label .tr-name{color:var(--text3);font-size:9px;font-weight:400}
 .tr-args{color:var(--text3);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:220px}
 .tool-row[data-s=pending] .tr-icon{color:var(--text3);animation:spin .8s linear infinite}
 .tool-row[data-s=ok]   .tr-icon{color:var(--green)}
@@ -229,7 +249,6 @@ header{
 }
 .tool-group.collapsible .tool-group-summary:hover{color:var(--text2)}
 .tgs-arrow{font-size:8px;display:inline-block;transition:transform .15s}
-.tool-group.collapsed .tool-row,.tool-group.collapsed .tool-more{display:none!important}
 .tool-group.collapsed .tgs-arrow{transform:rotate(-90deg)}
 
 /* Cursor */
@@ -525,6 +544,8 @@ header{
 .mfe-time{font-size:8.5px;color:var(--text3);flex-shrink:0}
 .mfe-text{font-size:10.5px;color:var(--text2);white-space:pre-wrap;word-break:break-word;line-height:1.45}
 .mfe-reply{font-size:10.5px;color:var(--text3);white-space:pre-wrap;word-break:break-word;line-height:1.45;border-left:2px solid var(--teal-dim);padding-left:5px;margin-top:3px}
+.mfe-expandable{cursor:pointer}
+.mfe-more{color:var(--teal);font-size:9px;cursor:pointer;font-style:normal;font-family:var(--mono)}
 
 /* Overlay */
 #overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,.35);z-index:15;backdrop-filter:blur(1px)}
@@ -769,6 +790,53 @@ const _TOKEN = '__AGENT_TOKEN__';
 var MAX_ARGS_DISPLAY_LENGTH = 50;
 function _esc(s){ return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;'); }
 
+// ── Tool label map (tool function name → short human-readable description) ──
+var _TOOL_LABELS = {
+  // File operations
+  read:'Read file', read_file:'Read file',
+  write:'Write file', write_file:'Write file',
+  edit:'Edit file', edit_file:'Edit file', patch_file:'Patch file',
+  append_file:'Append to file',
+  delete_file:'Delete file', remove_file:'Delete file',
+  move_file:'Move file', rename_file:'Rename file',
+  copy_file:'Copy file',
+  // Directory & search
+  ls:'List directory', list_directory:'List directory',
+  mkdir:'Create directory',
+  glob:'Find files', find_files:'Find files',
+  grep:'Search in files', search_in_files:'Search in files', search_files:'Search files',
+  // Shell / execution
+  shell:'Run command', bash:'Run command', run_command:'Run command',
+  execute:'Run command', run_bash:'Run command',
+  // Git
+  git_status:'Git status', git_diff:'Git diff',
+  git_add:'Stage files', git_commit:'Git commit',
+  git_branch:'Git branch', git_push:'Git push',
+  git_pull:'Git pull', git_log:'Git log',
+  // Todos
+  todo_add:'Add todo', todo_complete:'Complete todo',
+  todo_update:'Update todo', todo_list:'List todos',
+  // Planning
+  plan_complete_step:'Complete plan step', plan_update:'Update plan',
+  // Task state
+  task:'Create task file',
+  task_state_update:'Update task state',
+  task_state_get:'Get task state',
+  task_reconcile:'Reconcile tasks',
+  // Web / external
+  web_search:'Search web', fetch_url:'Fetch URL',
+  browser:'Open browser', browser_open:'Open browser',
+  // Vision
+  vision:'Analyze image', analyze_image:'Analyze image', view_image:'View image',
+  // Time / misc
+  get_time:'Get current time',
+  // Memory
+  memory_add:'Add to memory', memory_search:'Search memory', memory_list:'List memory',
+  // Agent delegation
+  delegate_task:'Delegate task', spawn_agent:'Spawn sub-agent',
+};
+function _getToolLabel(name){ return _TOOL_LABELS[name] || null; }
+
 function _makePlanBlock(plan){
   var card = document.createElement('div'); card.className = 'plan-card open';
   var hdr  = document.createElement('div'); hdr.className  = 'plan-card-header';
@@ -828,6 +896,58 @@ function _makeThinkingBlock(text){
     prev.textContent = open ? '💭 thinking…' : '💭 ' + first + (multi ? '…' : '');
   };
   return el;
+}
+
+// Make a long agent message collapsible with a short preview header.
+function _makeStepCollapsible(wrap, raw){
+  var THRESHOLD = 160;
+  if(!raw || raw.trim().length < THRESHOLD) return;
+  var lines = raw.trim().split('\n');
+  var firstLine = '';
+  for(var li = 0; li < lines.length; li++){
+    var l = lines[li].trim();
+    if(l){ firstLine = l.replace(/^#+\s*|\*\*|\*|`/g,''); break; }
+  }
+  if(!firstLine) return;
+  var preview = firstLine.slice(0, 120) + (firstLine.length > 120 ? '…' : '');
+  var body = wrap.querySelector('.msg-body');
+  if(!body) return;
+  var arrow = document.createElement('span'); arrow.className = 'msg-step-arrow'; arrow.textContent = '▾';
+  var prev  = document.createElement('span'); prev.className  = 'msg-step-preview'; prev.textContent = preview;
+  var hdr   = document.createElement('div');  hdr.className   = 'msg-step-hdr'; hdr.title = 'Click to collapse/expand';
+  hdr.appendChild(arrow); hdr.appendChild(prev);
+  wrap.insertBefore(hdr, body);
+  hdr.onclick = function(){
+    var c = wrap.classList.toggle('step-collapsed');
+    arrow.textContent = c ? '▶' : '▾';
+  };
+}
+
+// Make a tool row clickable to reveal its full arguments.
+function _makeToolRowExpandable(row, fullArgs, toolName){
+  if(!fullArgs && !toolName) return;
+  row.classList.add('tr-expandable');
+  row.onclick = function(){
+    var next = row.nextSibling;
+    if(next && next.classList && next.classList.contains('tr-detail')){
+      next.classList.toggle('open');
+    } else {
+      var det = document.createElement('div'); det.className = 'tr-detail open';
+      if(toolName){
+        var nlbl = document.createElement('div'); nlbl.className = 'tr-detail-lbl'; nlbl.textContent = 'tool';
+        var ntxt = document.createElement('div'); ntxt.style.marginBottom = '5px'; ntxt.textContent = toolName;
+        det.appendChild(nlbl); det.appendChild(ntxt);
+      }
+      if(fullArgs){
+        var albl = document.createElement('div'); albl.className = 'tr-detail-lbl'; albl.textContent = 'args';
+        var atxt = document.createElement('div');
+        try{ atxt.textContent = JSON.stringify(JSON.parse(fullArgs), null, 2); }
+        catch(e){ atxt.textContent = fullArgs; }
+        det.appendChild(albl); det.appendChild(atxt);
+      }
+      row.parentNode.insertBefore(det, row.nextSibling);
+    }
+  };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1039,7 +1159,7 @@ const Stream = (function(){
     requestAnimationFrame(function(){
       var wrap = body.closest('.msg');
       if(!raw.trim()){ if(wrap) wrap.remove(); }
-      else{ body.innerHTML = MD.render(raw) || _esc(raw); if(wrap) _attachCopyBtn(wrap, raw); }
+      else{ body.innerHTML = MD.render(raw) || _esc(raw); if(wrap){ _attachCopyBtn(wrap, raw); _makeStepCollapsible(wrap, raw); } }
       Scroll.maybe();
     });
   }
@@ -1065,10 +1185,16 @@ const Tools = (function(){
   }
   function endGroup(){ if(group && count > 0) _finaliseToolGroup(group, count); group = null; count = 0; }
   function makeRow(name, args){
-    var row = document.createElement('div'); row.className = 'tool-row'; row.dataset.s = 'pending';
+    var label = _getToolLabel(name);
+    var row = document.createElement('div');
+    row.className = 'tool-row' + (label ? ' has-label' : ''); row.dataset.s = 'pending';
     var pv = args ? (args.slice(0,MAX_ARGS_DISPLAY_LENGTH) + (args.length > MAX_ARGS_DISPLAY_LENGTH ? '…' : '')) : '';
     var titleAttr = args && args.length > MAX_ARGS_DISPLAY_LENGTH ? ' title="' + _esc(args) + '"' : '';
-    row.innerHTML = '<span class="tr-icon">◌</span><span class="tr-name">' + _esc(name) + '</span>' + (pv ? '<span class="tr-args"' + titleAttr + '>(' + _esc(pv) + ')</span>' : '');
+    var nameHtml = label
+      ? '<span class="tr-label">' + _esc(label) + '</span><span class="tr-name">' + _esc(name) + '</span>'
+      : '<span class="tr-name">' + _esc(name) + '</span>';
+    row.innerHTML = '<span class="tr-icon">◌</span>' + nameHtml + (pv ? '<span class="tr-args"' + titleAttr + '>(' + _esc(pv) + ')</span>' : '');
+    _makeToolRowExpandable(row, args, name);
     if(!pending.has(name)) pending.set(name, []);
     pending.get(name).push(row); return row;
   }
@@ -1113,16 +1239,23 @@ const Replay = (function(){
       hideEmpty(); var wrap = document.createElement('div'); wrap.className = 'msg agent';
       wrap.innerHTML = '<div class="msg-label">Agent</div><div class="msg-body"></div>';
       var body = wrap.querySelector('.msg-body'); body.innerHTML = MD.render(tokBuf) || _esc(tokBuf);
-      _addCopyBtn(wrap, tokBuf); pane.appendChild(wrap); tokBuf = '';
+      var raw = tokBuf; _addCopyBtn(wrap, raw); _makeStepCollapsible(wrap, raw); pane.appendChild(wrap); tokBuf = '';
     }
     function flushTools(){
       if(!toolItems.length) return; hideEmpty();
       var g = document.createElement('div'); g.className = 'tool-group';
       toolItems.forEach(function(t){
-        var row = document.createElement('div'); row.className = 'tool-row'; row.dataset.s = t.ok === null ? 'pending' : (t.ok ? 'ok' : 'fail');
+        var label = _getToolLabel(t.name);
+        var row = document.createElement('div');
+        row.className = 'tool-row' + (label ? ' has-label' : '');
+        row.dataset.s = t.ok === null ? 'pending' : (t.ok ? 'ok' : 'fail');
         var pv = t.args ? (t.args.slice(0,MAX_ARGS_DISPLAY_LENGTH) + (t.args.length > MAX_ARGS_DISPLAY_LENGTH ? '…' : '')) : '';
         var titleAttr = t.args && t.args.length > MAX_ARGS_DISPLAY_LENGTH ? ' title="' + _esc(t.args) + '"' : '';
-        row.innerHTML = '<span class="tr-icon">' + (t.ok === null ? '◌' : (t.ok ? '✓' : '✗')) + '</span><span class="tr-name">' + _esc(t.name) + '</span>' + (pv ? '<span class="tr-args"' + titleAttr + '>(' + _esc(pv) + ')</span>' : '');
+        var nameHtml = label
+          ? '<span class="tr-label">' + _esc(label) + '</span><span class="tr-name">' + _esc(t.name) + '</span>'
+          : '<span class="tr-name">' + _esc(t.name) + '</span>';
+        row.innerHTML = '<span class="tr-icon">' + (t.ok === null ? '◌' : (t.ok ? '✓' : '✗')) + '</span>' + nameHtml + (pv ? '<span class="tr-args"' + titleAttr + '>(' + _esc(pv) + ')</span>' : '');
+        _makeToolRowExpandable(row, t.args, t.name);
         g.appendChild(row);
       });
       _finaliseToolGroup(g, toolItems.length); pane.appendChild(g); toolItems = [];
@@ -1227,12 +1360,24 @@ const Messaging = (function(){
     entries.slice().reverse().forEach(function(e){
       var el = document.createElement('div'); el.className = 'mfe';
       var dirLabel = e.direction === 'out' ? '↑ out' : '↓ in', dirCls = e.direction === 'out' ? 'out' : '';
+      var sender = e.sender || '';
+      var senderTitleAttr = sender.length > 24 ? ' title="' + _esc(sender) + '"' : '';
+      var textFull = e.text || '';
+      var textTrunc = textFull.slice(0,200);
+      var replyFull = (e.reply && e.direction === 'in') ? e.reply : '';
+      var replyTrunc = replyFull.slice(0,200);
       el.innerHTML = '<div class="mfe-meta"><span class="mfe-platform mfe-platform-' + _esc(e.platform||'') + '">' + _esc(e.platform||'') + '</span>'
         + '<span class="mfe-dir ' + dirCls + '">' + dirLabel + '</span>'
-        + '<span class="mfe-sender">' + _esc((e.sender||'').slice(0,24)) + '</span>'
+        + '<span class="mfe-sender"' + senderTitleAttr + '>' + _esc(sender.slice(0,24)) + '</span>'
         + '<span class="mfe-time">' + _fmtTime(e.ts) + '</span></div>'
-        + '<div class="mfe-text">' + _esc((e.text||'').slice(0,200)) + '</div>'
-        + (e.reply && e.direction === 'in' ? '<div class="mfe-reply">' + _esc(e.reply.slice(0,200)) + '</div>' : '');
+        + '<div class="mfe-text' + (textFull.length > 200 ? ' mfe-expandable' : '') + '">' + _esc(textTrunc) + (textFull.length > 200 ? '<span class="mfe-more"> …show more</span>' : '') + '</div>'
+        + (replyFull ? '<div class="mfe-reply' + (replyFull.length > 200 ? ' mfe-expandable' : '') + '">' + _esc(replyTrunc) + (replyFull.length > 200 ? '<span class="mfe-more"> …show more</span>' : '') + '</div>' : '');
+      if(textFull.length > 200){
+        el.querySelector('.mfe-text').onclick = function(){ this.textContent = textFull; this.classList.remove('mfe-expandable'); };
+      }
+      if(replyFull.length > 200){
+        el.querySelector('.mfe-reply').onclick = function(){ this.textContent = replyFull; this.classList.remove('mfe-expandable'); };
+      }
       feed.appendChild(el);
     });
   }
@@ -1668,6 +1813,7 @@ const Sessions = (function(){
         var item = document.createElement('div');
         item.className = 'session-item' + (Agent.getSession() === s.id ? ' active' : '');
         var statClass = s.status === 'completed' ? 'completed' : (s.status === 'error' || s.status === 'interrupted') ? 'error' : s.status === 'waiting' ? 'waiting' : s.status === 'active' ? 'active' : '';
+        item.title = s.task || '(no task)';
         item.innerHTML = '<div class="si-id">' + _esc(s.id.slice(-12)) + '</div><div class="si-task">' + _esc(s.task || '(no task)') + '</div><div class="si-stat ' + statClass + '">' + _esc(s.status) + (s.iterations ? ' · ' + s.iterations + ' iter' : '') + '</div>';
         item.onclick = function(){
           _selectedId = s.id;
@@ -1750,10 +1896,21 @@ const SessionInspect = (function(){
     if(s.remaining_queue && s.remaining_queue.length){
       html += '<div class="si-queue"><div class="si-queue-title">Remaining (' + s.remaining_queue.length + ')</div>';
       s.remaining_queue.slice(0,8).forEach(function(item){ html += '<div class="si-queue-item">' + _esc(item) + '</div>'; });
-      if(s.remaining_queue.length > 8) html += '<div class="si-queue-item" style="color:var(--text3)">…and ' + (s.remaining_queue.length - 8) + ' more</div>';
+      if(s.remaining_queue.length > 8) html += '<div class="si-queue-item si-queue-more" style="cursor:pointer;color:var(--teal)">▶ show ' + (s.remaining_queue.length - 8) + ' more</div>';
       html += '</div>';
     }
     body.innerHTML = html;
+    if(s.remaining_queue && s.remaining_queue.length > 8){
+      var moreEl = body.querySelector('.si-queue-more');
+      if(moreEl){
+        var remaining = s.remaining_queue.slice(8);
+        moreEl.onclick = function(){
+          var queueDiv = moreEl.parentNode;
+          remaining.forEach(function(item){ var d = document.createElement('div'); d.className = 'si-queue-item'; d.textContent = item; queueDiv.insertBefore(d, moreEl); });
+          moreEl.remove();
+        };
+      }
+    }
   }
 
   // ── Plan ──
@@ -1936,8 +2093,8 @@ const ToolsPanel = (function(){
       if(!shown.length) return;
       html += '<div class="tool-cat' + (isMcp?' mcp-cat':'') + '"><div class="tool-cat-hdr">' + _esc(name) + '</div>';
       shown.forEach(function(t){
-        var params = t.params && t.params.length ? '(' + t.params.slice(0,4).join(', ') + (t.params.length>4?', …':'') + ')' : '()';
-        html += '<div class="tool-entry"><div class="te-name">' + _esc(t.name) + '<span class="te-params"> ' + _esc(params) + '</span></div>' + (t.description ? '<div class="te-desc">' + _esc(t.description.slice(0,100)) + '</div>' : '') + '</div>';
+        var params = t.params && t.params.length ? '(' + t.params.join(', ') + ')' : '()';
+        html += '<div class="tool-entry"><div class="te-name">' + _esc(t.name) + '<span class="te-params"> ' + _esc(params) + '</span></div>' + (t.description ? '<div class="te-desc">' + _esc(t.description) + '</div>' : '') + '</div>';
       });
       html += '</div>';
     }
