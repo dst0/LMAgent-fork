@@ -1996,24 +1996,24 @@ const Agent = (function(){
         break;
       }
       case 'done':
-        	  // If we already handled stop optimistically, ignore the late SSE echo
-        	 if(evt.data === 'stopped' && state === 'idle') break;
-            	if(suppressLiveRender){
-                  var isWait = String(evt.data || '').startsWith('waiting');
-                  ThinkingStream.finalize();
-                  Status.iter('');
-                  Messages.showProgress(false);
-                  transition(isWait ? 'waiting' : 'idle');
-                  Status.set(isWait ? 'waiting — will resume automatically' : (evt.data || 'done'), isWait ? 'wait' : 'done');
-                  if(!isWait){
-                    setActiveSession(null);
-                    requestId = null;
-                    suppressLiveRender = false;
-                  }
-                }else{
-            	  _onDone(evt.data);
-                }
-                     break;
+        // If we already handled stop optimistically, ignore the late SSE echo
+        if(evt.data === 'stopped' && state === 'idle') break;
+        if(suppressLiveRender){
+          var isWait = String(evt.data || '').startsWith('waiting');
+          ThinkingStream.finalize();
+          Status.iter('');
+          Messages.showProgress(false);
+          transition(isWait ? 'waiting' : 'idle');
+          Status.set(isWait ? 'waiting — will resume automatically' : (evt.data || 'done'), isWait ? 'wait' : 'done');
+          if(!isWait){
+            setActiveSession(null);
+            requestId = null;
+            suppressLiveRender = false;
+          }
+        }else{
+          _onDone(evt.data);
+        }
+        break;
       case 'error':
         Stream.finalize(); Tools.endGroup(); ThinkingStream.finalize();
         if(!suppressLiveRender) Messages.sys('⚠ ' + evt.data, 'err');
