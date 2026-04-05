@@ -1202,6 +1202,7 @@ const Status = (function(){
 })();
 
 const LiveActivity = (function(){
+  var IDLE_ALERT_MS = 12000;
   var state = {
     title: 'Idle',
     detail: '',
@@ -1296,7 +1297,7 @@ const LiveActivity = (function(){
   setInterval(function(){
     if(!state.running || !state.lastEventAt) return;
     var idleMs = Date.now() - state.lastEventAt;
-    state.idleAlert = idleMs >= 12000
+    state.idleAlert = idleMs >= IDLE_ALERT_MS
       ? 'No visible activity for ' + Math.round(idleMs / 1000) + 's — ping the model to decide now or retry with guardrails.'
       : '';
     _render();

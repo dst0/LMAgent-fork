@@ -281,6 +281,7 @@ def _slice_lines(content: str, start_line: int, max_lines: int) -> Tuple[str, in
         end = total_lines
     snippet = "\n".join(lines[start - 1:end])
     if content.endswith("\n") and end == total_lines:
+        # Preserve the original trailing newline when the slice reaches EOF.
         snippet += "\n"
     return snippet, total_lines, start, end
 
@@ -404,7 +405,10 @@ def tool_outline(workspace: Path, path: str, max_items: int = 0) -> Dict[str, An
     limit = max_items if max_items and max_items > 0 else Config.OUTLINE_MAX_ITEMS
     try:
         content = fp.read_text(encoding="utf-8", errors="replace")
-        symbols, parsed = _outline_python(content, limit) if fp.suffix.lower() == ".py" else ([], False)
+        symbols: List[Dict[str, Any]] = []
+        parsed = False
+        if fp.suffix.lower() == ".py":
+            symbols, parsed = _outline_python(content, limit)
         parser = "python-ast" if parsed else "regex"
         if not symbols:
             symbols = _outline_fallback(content, limit)

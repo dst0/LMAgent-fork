@@ -584,6 +584,12 @@ def run_agent(
         elif event_type == "waiting":     Log.wait(f"Sleeping until {data.get('resume_after')}: {data.get('reason')}")
 
     def _timing_snapshot() -> Dict[str, Any]:
+        def _avg(samples: List[float]) -> float:
+            return round(sum(samples) / len(samples), 3) if samples else 0.0
+
+        def _max(samples: List[float]) -> float:
+            return round(max(samples), 3) if samples else 0.0
+
         llm_samples = timing_stats["llm_seconds"]
         iter_samples = timing_stats["iteration_seconds"]
         elapsed = time.perf_counter() - run_started_at
@@ -591,10 +597,10 @@ def run_agent(
             "started_at": timing_stats["started_at"],
             "elapsed_seconds": round(elapsed, 3),
             "llm_calls": timing_stats["llm_calls"],
-            "avg_llm_seconds": round(sum(llm_samples) / len(llm_samples), 3) if llm_samples else 0.0,
-            "max_llm_seconds": round(max(llm_samples), 3) if llm_samples else 0.0,
-            "avg_iteration_seconds": round(sum(iter_samples) / len(iter_samples), 3) if iter_samples else 0.0,
-            "max_iteration_seconds": round(max(iter_samples), 3) if iter_samples else 0.0,
+            "avg_llm_seconds": _avg(llm_samples),
+            "max_llm_seconds": _max(llm_samples),
+            "avg_iteration_seconds": _avg(iter_samples),
+            "max_iteration_seconds": _max(iter_samples),
             "latest_llm_seconds": round(llm_samples[-1], 3) if llm_samples else 0.0,
             "latest_iteration_seconds": round(iter_samples[-1], 3) if iter_samples else 0.0,
         }
