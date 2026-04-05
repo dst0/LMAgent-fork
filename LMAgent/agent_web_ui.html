@@ -443,6 +443,7 @@ header{
 .si-section-arrow{font-size:9px;color:var(--text3);transition:transform .15s}
 .si-section.open .si-section-arrow{transform:rotate(90deg)}
 .si-section-body{display:none;padding:0 11px 8px}
+.si-refresh-status{display:none;padding:0 11px 8px;font-size:10.5px;color:var(--text3)}
 .si-section.open .si-section-body{display:block}
 
 /* Progress bar */
@@ -687,6 +688,7 @@ header{
     <span class="si-session-label" id="si-session-label">No active session</span>
     <span class="si-refresh-btn" onclick="SessionInspect.refresh()">⟳ refresh</span>
   </div>
+  <div class="si-refresh-status" id="si-refresh-status"></div>
   <div id="si-body">
     <!-- Todos section -->
     <div class="si-section open" id="si-todos-section">
@@ -2124,8 +2126,17 @@ const Sessions = (function(){
 // ─────────────────────────────────────────────────────────────────────────────
 const SessionInspect = (function(){
   var _sid = null, _autoTimer = null, _followCurrent = true;
+  var _fetchPromise = null, _queuedSid = null, _hasSnapshot = false;
 
   function _setSid(id){
+    if(id !== _sid){
+      _hasSnapshot = false;
+      _setRefreshStatus('');
+      ['si-todos-body','si-tasks-body','si-plan-body','si-history-body'].forEach(function(bodyId){
+        var el = document.getElementById(bodyId);
+        if(el) el.innerHTML = '<div class="si-empty">' + (id ? 'Loading…' : 'No active session') + '</div>';
+      });
+    }
     _sid = id;
     var lbl = document.getElementById('si-session-label');
     if(lbl) lbl.textContent = id ? ('session: ' + id.slice(-12)) : 'No active session';
@@ -2268,31 +2279,73 @@ const SessionInspect = (function(){
     el.classList.add('expanded'); btn.remove();
   }
 
-  async function _fetchAll(sid){
-    if(!sid) return;
-    try{
-      var [todos, tasks, plan, hist] = await Promise.all([
-        fetch('/session/todos?session_id=' + encodeURIComponent(sid)).then(function(r){ return r.json(); }),
-        fetch('/session/tasks?session_id=' + encodeURIComponent(sid)).then(function(r){ return r.json(); }),
-        fetch('/session/plan?session_id='  + encodeURIComponent(sid)).then(function(r){ return r.json(); }),
-        fetch('/session/history?session_id=' + encodeURIComponent(sid)).then(function(r){ return r.json(); }),
-      ]);
-      _renderTodos(todos);
-      _renderTasks(tasks);
-      _renderPlan(plan);
-      _renderHistory(hist);
-    }catch(e){
-      var msg = '<div class="si-empty">⚠ ' + _esc(String(e.message || e)) + '</div>';
-      ['si-todos-body','si-tasks-body','si-plan-body','si-history-body'].forEach(function(id){
-        var el = document.getElementById(id); if(el) el.innerHTML = msg;
-      });
+  function _setRefreshStatus(msg, isError){
+    var el = document.getElementById('si-refresh-status');
+    if(!el) return;
+    if(!msg){
+      el.style.display = 'none';
+      el.textContent = '';
+      return;
     }
+    el.style.display = 'block';
+    el.style.color = isError ? 'var(--amber)' : 'var(--text3)';
+    el.textContent = msg;
   }
 
-  async function _fetchTodos(sid){ if(!sid) return; try{ _renderTodos(await fetch('/session/todos?session_id='+encodeURIComponent(sid)).then(function(r){ return r.json(); })); }catch(_){} }
-  async function _fetchTasks(sid){ if(!sid) return; try{ _renderTasks(await fetch('/session/tasks?session_id='+encodeURIComponent(sid)).then(function(r){ return r.json(); })); }catch(_){} }
-  async function _fetchPlan(sid){  if(!sid) return; try{ _renderPlan(await fetch('/session/plan?session_id='+encodeURIComponent(sid)).then(function(r){ return r.json(); })); }catch(_){} }
-  async function _fetchHistory(sid){ if(!sid) return; try{ _renderHistory(await fetch('/session/history?session_id='+encodeURIComponent(sid)).then(function(r){ return r.json(); })); }catch(_){} }
+  function _renderFetchError(msg){
+    var html = '<div class="si-empty">⚠ ' + _esc(msg) + '</div>';
+    ['si-todos-body','si-tasks-body','si-plan-body','si-history-body'].forEach(function(id){
+      var el = document.getElementById(id); if(el) el.innerHTML = html;
+    });
+  }
+
+  async function _fetchSnapshot(sid){
+    var res = await fetch('/session/inspect?session_id=' + encodeURIComponent(sid));
+    var data = null;
+    try{ data = await res.json(); }catch(_){}
+    if(!res.ok){
+      var err = new Error((data && data.error) || ('HTTP ' + res.status));
+      err.status = res.status;
+      err.rateLimited = res.status === 429;
+      throw err;
+    }
+    return data || {};
+  }
+
+  async function _fetchAll(sid){
+    if(!sid) return;
+    _queuedSid = sid;
+    if(_fetchPromise) return _fetchPromise;
+    _fetchPromise = (async function(){
+      while(_queuedSid){
+        var nextSid = _queuedSid;
+        _queuedSid = null;
+        try{
+          var snapshot = await _fetchSnapshot(nextSid);
+          _renderTodos(snapshot.todos || {});
+          _renderTasks(snapshot.tasks || {});
+          _renderPlan(snapshot.plan || {});
+          _renderHistory(snapshot.history || {});
+          _hasSnapshot = true;
+          _setRefreshStatus('');
+        }catch(e){
+          var msg = String(e && (e.message || e) || 'refresh failed');
+          if(_hasSnapshot){
+            _setRefreshStatus(e && e.rateLimited ? 'Status refresh paused briefly after rate limiting; retrying…' : ('Status refresh failed: ' + msg), true);
+            continue;
+          }
+          _setRefreshStatus(msg, true);
+          _renderFetchError(msg);
+        }
+      }
+    })().finally(function(){ _fetchPromise = null; });
+    return _fetchPromise;
+  }
+
+  async function _fetchTodos(sid){ return _fetchAll(sid); }
+  async function _fetchTasks(sid){ return _fetchAll(sid); }
+  async function _fetchPlan(sid){  return _fetchAll(sid); }
+  async function _fetchHistory(sid){ return _fetchAll(sid); }
 
   // Tool names that affect each section
   var _TODO_TOOLS = ['todo_add','todo_list'];
@@ -2325,13 +2378,13 @@ const SessionInspect = (function(){
     if(evt.type === 'plan'){
       // Plan created/updated — render immediately from event data, then re-fetch for full state
       _renderPlan({plan: typeof evt.data === 'object' ? evt.data : null});
-      setTimeout(function(){ _fetchPlan(sid); }, 300);
+      setTimeout(function(){ _fetchAll(sid); }, 300);
     } else if(evt.type === 'tool'){
       var toolEvt = _toolEventInfo(evt.data);
       if(toolEvt.phase === 'result'){
         // Any tool result may affect todos, tasks or plan — refresh all three
         _lastRefresh = Date.now();
-        setTimeout(function(){ _fetchTodos(sid); _fetchTasks(sid); _fetchPlan(sid); }, 250);
+        setTimeout(function(){ _fetchAll(sid); }, 250);
       }
     } else if(evt.type === 'iteration'){
       // Each iteration boundary — refresh everything so all sections stay current
