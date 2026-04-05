@@ -69,9 +69,9 @@ class SessionSwitchDuringRunTests(unittest.TestCase):
 
         self.assertNotIn("Cannot switch session while agent is running", content)
         self.assertIn("activeSessionId = null", content)
+        self.assertIn("shouldSuppressLiveRender", content)
         self.assertIn("suppressLiveRender", content)
         self.assertIn("keepLiveState", content)
-        self.assertIn("id !== activeSessionId", content)
         self.assertIn("if(suppressLiveRender) break;", content)
 
 
