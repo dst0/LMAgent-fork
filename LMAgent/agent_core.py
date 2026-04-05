@@ -1322,7 +1322,7 @@ class SessionManager:
         plan = data.get("plan") or {}
         steps = plan.get("steps") or []
         total = len(steps)
-        if not total and not plan:
+        if not steps and not plan.get("title") and not data.get("current_step_id"):
             return None
         completed = sum(1 for s in steps if s.get("status") == "completed")
         in_progress = sum(1 for s in steps if s.get("status") == "in_progress")

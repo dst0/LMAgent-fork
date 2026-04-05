@@ -1985,7 +1985,7 @@ const Sessions = (function(){
           list.querySelectorAll('.session-item').forEach(function(el){ el.classList.remove('is-selected'); });
           item.classList.add('is-selected');
           _selectedId = s.id;
-          _selectedIsCurrent = ((d.current_session_id || Agent.getSession() || null) === s.id);
+          _selectedIsCurrent = (curId === s.id);
           SessionInspect.loadSession(s.id, false);
           _updateSwitchBtn();
         };
