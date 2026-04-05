@@ -180,17 +180,17 @@ header{
 
 /* Thinking blocks */
 .thinking-block{
-  margin:2px 0 2px 4px;border-left:2px solid var(--border2);padding:3px 10px;
-  font-size:10.5px;font-family:var(--mono);color:var(--text3);
+  margin:2px 0 2px 4px;border-left:2px solid var(--purple);padding:3px 10px;
+  font-size:10.5px;font-family:var(--mono);color:var(--text2);
   cursor:pointer;user-select:none;transition:border-color .15s,opacity .15s;
-  opacity:.55;line-height:1.5;
+  opacity:.85;line-height:1.5;
 }
-.thinking-block:hover{border-left-color:var(--purple);opacity:.85}
+.thinking-block:hover{border-left-color:var(--purple);opacity:1}
 .thinking-block .tb-header{display:flex;align-items:baseline;gap:6px}
 .thinking-block .tb-arrow{font-size:8px;color:var(--purple);transition:transform .15s;flex-shrink:0;display:inline-block}
 .thinking-block.open .tb-arrow{transform:rotate(90deg)}
 .thinking-block .tb-preview{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1}
-.thinking-block .tb-body{display:none;white-space:pre-wrap;word-break:break-word;margin-top:5px;color:var(--text3);line-height:1.55}
+.thinking-block .tb-body{display:none;white-space:pre-wrap;word-break:break-word;margin-top:5px;color:var(--text2);line-height:1.55}
 .thinking-block.open .tb-body{display:block}
 
 /* Agent step collapse */
@@ -234,7 +234,7 @@ header{
 .tr-label{color:var(--text2);font-weight:500;font-family:var(--sans);font-size:11px}
 .tr-name{color:var(--text2);font-weight:500}
 .tool-row.has-label .tr-name{color:var(--text3);font-size:9px;font-weight:400}
-.tr-args{color:var(--text3);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:220px}
+.tr-args{color:var(--amber2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:220px;font-size:10px}
 .tool-row[data-s=pending] .tr-icon{color:var(--text3);animation:spin .8s linear infinite}
 .tool-row[data-s=ok]   .tr-icon{color:var(--green)}
 .tool-row[data-s=fail] .tr-icon{color:var(--red)}
@@ -415,6 +415,7 @@ header{
 .session-item.is-current{border-color:var(--teal-dim)}
 .session-item.is-active{border-color:var(--amber)}
 .session-item.is-current.is-active{border-color:var(--amber)}
+.session-item.is-selected{border-color:var(--amber);background:var(--surface2)}
 .si-id{font-size:9px;color:var(--text3);margin-bottom:2px}
 .si-task{font-size:11px;color:var(--text2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .si-badges{display:flex;gap:3px;flex-wrap:wrap;margin-top:3px;align-items:center}
@@ -424,6 +425,10 @@ header{
 .si-badge.completed{color:var(--green)}.si-badge.error,.si-badge.interrupted{color:var(--red)}
 .si-badge.waiting{color:var(--purple)}.si-badge.idle{color:var(--text3)}
 .si-iter{font-size:9px;color:var(--text3);margin-left:auto}
+#sessions-switch-footer{padding:8px 9px;border-top:1px solid var(--border);flex-shrink:0}
+#sessions-switch-btn{width:100%;padding:7px 10px;border-radius:var(--r);border:1px solid var(--border);background:var(--surface2);color:var(--text3);font-family:var(--mono);font-size:11px;cursor:not-allowed;transition:all .12s}
+#sessions-switch-btn.active{border-color:var(--teal-dim);color:var(--teal);cursor:pointer;background:var(--surface2)}
+#sessions-switch-btn.active:hover{background:rgba(62,207,178,.08);border-color:var(--teal)}
 
 /* Session inspect panel */
 #session-inspect-panel{width:min(420px,96vw)}
@@ -662,6 +667,9 @@ header{
 <div class="panel" id="sessions-panel">
   <div class="panel-hdr"><span>Sessions</span><button class="btn" onclick="UI.closeSessions()">✕</button></div>
   <div id="sessions-list"></div>
+  <div id="sessions-switch-footer">
+    <button id="sessions-switch-btn" disabled onclick="Sessions.switchSelected()">Select a session above</button>
+  </div>
 </div>
 
 <!-- Session status panel -->
@@ -796,6 +804,42 @@ const _TOKEN = '__AGENT_TOKEN__';
 var MAX_ARGS_DISPLAY_LENGTH = 50;
 function _esc(s){ return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;'); }
 
+// Extract the primary human-readable argument from a tool's JSON args string.
+// Returns a short display string (e.g. just the file path or command) or null.
+var _PRIMARY_ARG_FILE_TOOLS = {read:1,read_file:1,write:1,write_file:1,edit:1,edit_file:1,patch_file:1,
+  append_file:1,delete_file:1,remove_file:1,move_file:1,rename_file:1,copy_file:1,
+  ls:1,list_directory:1,mkdir:1};
+var _PRIMARY_ARG_CMD_TOOLS   = {shell:1,bash:1,run_command:1,execute:1,run_bash:1};
+var _PRIMARY_ARG_PAT_TOOLS   = {grep:1,search_in_files:1,search_files:1,glob:1,find_files:1};
+var _PRIMARY_ARG_QUERY_TOOLS = {web_search:1,memory_search:1};
+var _PRIMARY_ARG_URL_TOOLS   = {fetch_url:1,browser:1,browser_open:1};
+
+function _getPrimaryArg(toolName, argsJson){
+  if(!argsJson) return null;
+  var obj;
+  try{ obj = JSON.parse(argsJson); }catch(_){ return null; }
+  if(typeof obj !== 'object' || obj === null) return String(obj);
+  if(_PRIMARY_ARG_FILE_TOOLS[toolName])  return obj.path || obj.src || obj.source || null;
+  if(_PRIMARY_ARG_CMD_TOOLS[toolName])   return obj.command || obj.cmd || null;
+  if(_PRIMARY_ARG_PAT_TOOLS[toolName])   return obj.pattern || obj.query || obj.path || null;
+  if(_PRIMARY_ARG_QUERY_TOOLS[toolName]) return obj.query || obj.text || null;
+  if(_PRIMARY_ARG_URL_TOOLS[toolName])   return obj.url || null;
+  if(toolName === 'git_commit') return obj.message || null;
+  if(toolName === 'todo_add' || toolName === 'todo_update') return obj.description || obj.text || null;
+  if(toolName === 'delegate_task' || toolName === 'spawn_agent') return obj.task || obj.description || null;
+  // Generic fallback: return value of first key if it's a short string
+  var keys = Object.keys(obj);
+  if(keys.length > 0){ var v = obj[keys[0]]; if(typeof v === 'string' && v.length < 80) return v; }
+  return null;
+}
+
+function _fmtPrimaryArg(toolName, argsJson){
+  var primary = _getPrimaryArg(toolName, argsJson);
+  if(primary) return primary.length > MAX_ARGS_DISPLAY_LENGTH ? primary.slice(0, MAX_ARGS_DISPLAY_LENGTH) + '…' : primary;
+  if(!argsJson) return '';
+  return argsJson.slice(0, MAX_ARGS_DISPLAY_LENGTH) + (argsJson.length > MAX_ARGS_DISPLAY_LENGTH ? '…' : '');
+}
+
 // ── Tool label map (tool function name → short human-readable description) ──
 var _TOOL_LABELS = {
   // File operations
@@ -888,12 +932,12 @@ function _makePlanBlock(plan){
 }
 
 function _makeThinkingBlock(text){
-  var el = document.createElement('div'); el.className = 'thinking-block';
+  var el = document.createElement('div'); el.className = 'thinking-block open';
   var first = text.split('\n')[0].slice(0,120), multi = text.length > first.length || text.indexOf('\n') !== -1;
   var hdr = document.createElement('div'); hdr.className = 'tb-header';
-  var arrow = document.createElement('span'); arrow.className = 'tb-arrow'; arrow.textContent = '▶';
+  var arrow = document.createElement('span'); arrow.className = 'tb-arrow'; arrow.textContent = '▾';
   var prev = document.createElement('span'); prev.className = 'tb-preview';
-  prev.textContent = '💭 ' + first + (multi ? '…' : '');
+  prev.textContent = '💭 thinking…';
   hdr.appendChild(arrow); hdr.appendChild(prev); el.appendChild(hdr);
   var body = document.createElement('div'); body.className = 'tb-body'; body.textContent = text; el.appendChild(body);
   el.onclick = function(){
@@ -1148,7 +1192,7 @@ const Messages = (function(){
 // STREAM (live token rendering)
 // ─────────────────────────────────────────────────────────────────────────────
 const Stream = (function(){
-  var el = null, buf = '', _raf = false, _cursor = null;
+  var el = null, buf = '', _raf = false, _cursor = null, _pendingBuf = '';
 
   function _attachCopyBtn(wrap, rawText){
     var btn = document.createElement('button'); btn.className = 'msg-copy'; btn.textContent = 'copy'; btn.title = 'Copy';
@@ -1169,12 +1213,30 @@ const Stream = (function(){
       Scroll.maybe();
     });
   }
-  function start(){ buf = ''; el = Messages.add('agent',''); _cursor = document.createElement('span'); _cursor.className = 'cursor'; el.appendChild(_cursor); }
+  function _ensureEl(){
+    if(!el){
+      el = Messages.add('agent', '');
+      _cursor = document.createElement('span');
+      _cursor.className = 'cursor';
+      el.appendChild(_cursor);
+      buf = _pendingBuf;
+      _pendingBuf = '';
+    }
+  }
+  function start(){ buf = ''; _pendingBuf = ''; el = null; _cursor = null; _raf = false; }
   function flush(){ _raf = false; if(!el) return; el.innerHTML = MD.render(buf) || _esc(buf); el.appendChild(_cursor); Scroll.maybe(); }
-  function token(tok){ buf += tok; if(!_raf){ _raf = true; requestAnimationFrame(flush); } }
-  function finalize(){ _raf = false; if(!el) return; var b = el, r = buf; el = null; buf = ''; _cursor = null; _renderFinal(b, r); }
-  function reset(){ _raf = false; if(!el) return; var b = el, r = buf; el = null; buf = ''; _cursor = null; if(r.trim()) _renderFinal(b, r); else{ var w = b.closest('.msg'); if(w) w.remove(); } }
-  return {start, token, finalize, reset, active: function(){ return el !== null; }};
+  function token(tok){
+    if(!el){
+      // Buffer tokens until we have real content to avoid empty "Agent" flash
+      _pendingBuf += tok;
+      if(_pendingBuf.trim()){ _ensureEl(); if(!_raf){ _raf = true; requestAnimationFrame(flush); } }
+    } else {
+      buf += tok; if(!_raf){ _raf = true; requestAnimationFrame(flush); }
+    }
+  }
+  function finalize(){ _raf = false; _pendingBuf = ''; if(!el) return; var b = el, r = buf; el = null; buf = ''; _cursor = null; _renderFinal(b, r); }
+  function reset(){ _raf = false; _pendingBuf = ''; if(!el) return; var b = el, r = buf; el = null; buf = ''; _cursor = null; if(r.trim()) _renderFinal(b, r); else{ var w = b.closest('.msg'); if(w) w.remove(); } }
+  return {start, token, finalize, reset, active: function(){ return el !== null || _pendingBuf.length > 0; }};
 })();
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1194,12 +1256,11 @@ const Tools = (function(){
     var label = _getToolLabel(name);
     var row = document.createElement('div');
     row.className = 'tool-row' + (label ? ' has-label' : ''); row.dataset.s = 'pending';
-    var pv = args ? (args.slice(0,MAX_ARGS_DISPLAY_LENGTH) + (args.length > MAX_ARGS_DISPLAY_LENGTH ? '…' : '')) : '';
-    var titleAttr = args && args.length > MAX_ARGS_DISPLAY_LENGTH ? ' title="' + _esc(args) + '"' : '';
+    var pv = _fmtPrimaryArg(name, args);
     var nameHtml = label
-      ? '<span class="tr-label">' + _esc(label) + '</span><span class="tr-name">' + _esc(name) + '</span>'
+      ? '<span class="tr-label">' + _esc(label) + '</span>'
       : '<span class="tr-name">' + _esc(name) + '</span>';
-    row.innerHTML = '<span class="tr-icon">◌</span>' + nameHtml + (pv ? '<span class="tr-args"' + titleAttr + '>(' + _esc(pv) + ')</span>' : '');
+    row.innerHTML = '<span class="tr-icon">◌</span>' + nameHtml + (pv ? '<span class="tr-args">`' + _esc(pv) + '`</span>' : '');
     _makeToolRowExpandable(row, args, name);
     if(!pending.has(name)) pending.set(name, []);
     pending.get(name).push(row); return row;
@@ -1255,12 +1316,11 @@ const Replay = (function(){
         var row = document.createElement('div');
         row.className = 'tool-row' + (label ? ' has-label' : '');
         row.dataset.s = t.ok === null ? 'pending' : (t.ok ? 'ok' : 'fail');
-        var pv = t.args ? (t.args.slice(0,MAX_ARGS_DISPLAY_LENGTH) + (t.args.length > MAX_ARGS_DISPLAY_LENGTH ? '…' : '')) : '';
-        var titleAttr = t.args && t.args.length > MAX_ARGS_DISPLAY_LENGTH ? ' title="' + _esc(t.args) + '"' : '';
+        var pv = _fmtPrimaryArg(t.name, t.args);
         var nameHtml = label
-          ? '<span class="tr-label">' + _esc(label) + '</span><span class="tr-name">' + _esc(t.name) + '</span>'
+          ? '<span class="tr-label">' + _esc(label) + '</span>'
           : '<span class="tr-name">' + _esc(t.name) + '</span>';
-        row.innerHTML = '<span class="tr-icon">' + (t.ok === null ? '◌' : (t.ok ? '✓' : '✗')) + '</span>' + nameHtml + (pv ? '<span class="tr-args"' + titleAttr + '>(' + _esc(pv) + ')</span>' : '');
+        row.innerHTML = '<span class="tr-icon">' + (t.ok === null ? '◌' : (t.ok ? '✓' : '✗')) + '</span>' + nameHtml + (pv ? '<span class="tr-args">`' + _esc(pv) + '`</span>' : '');
         _makeToolRowExpandable(row, t.args, t.name);
         g.appendChild(row);
       });
@@ -1817,10 +1877,29 @@ const FileTree = (function(){
 // ─────────────────────────────────────────────────────────────────────────────
 const Sessions = (function(){
   var _selectedId = null;
+  var _selectedIsCurrent = false;
+
+  function _updateSwitchBtn(){
+    var btn = document.getElementById('sessions-switch-btn');
+    if(!btn) return;
+    if(!_selectedId){
+      btn.textContent = 'Select a session above';
+      btn.disabled = true; btn.className = '';
+    } else if(_selectedIsCurrent){
+      btn.textContent = '✓ Already the active session';
+      btn.disabled = true; btn.className = '';
+    } else {
+      btn.textContent = '↩ Switch to this session';
+      btn.disabled = false; btn.className = 'active';
+    }
+  }
 
   async function load(){
     var list = document.getElementById('sessions-list');
     if(!list) return;
+
+    _selectedId = null; _selectedIsCurrent = false;
+    _updateSwitchBtn();
 
     list.innerHTML = '<div style="padding:11px;color:var(--text3);font-size:10.5px">Loading…</div>';
 
@@ -1871,34 +1950,13 @@ const Sessions = (function(){
           '<div class="si-task">' + _esc(s.task || '(no task)') + '</div>' +
           '<div class="si-badges">' + badges + iterStr + '</div>';
 
-        item.onclick = async function(){
+        item.onclick = function(){
+          // Select this session (highlight) without switching
+          list.querySelectorAll('.session-item').forEach(function(el){ el.classList.remove('is-selected'); });
+          item.classList.add('is-selected');
           _selectedId = s.id;
-
-          if(Agent.running()){
-            return;
-          }
-
-          try{
-            var r = await fetch('/session/switch', {
-              method: 'POST',
-              headers: {'Content-Type':'application/json'},
-              body: JSON.stringify({session_id: s.id})
-            });
-
-            var res = await r.json();
-
-            if(res.error){
-              Messages.sys('⚠ Could not switch session: ' + res.error, 'err');
-              UI.closeAll();
-              return;
-            }
-
-            Agent.switchSession(s.id, res.events || []);
-            UI.closeAll();
-          }catch(e){
-            Messages.sys('⚠ Session switch failed: ' + (e.message || e), 'err');
-            UI.closeAll();
-          }
+          _selectedIsCurrent = isCurrent;
+          _updateSwitchBtn();
         };
 
         list.appendChild(item);
@@ -1908,7 +1966,38 @@ const Sessions = (function(){
     }
   }
 
-  return {load};
+  async function switchSelected(){
+    if(!_selectedId || _selectedIsCurrent) return;
+
+    if(Agent.running()){
+      Messages.sys('⚠ Cannot switch session while agent is running', 'err');
+      return;
+    }
+
+    try{
+      var r = await fetch('/session/switch', {
+        method: 'POST',
+        headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({session_id: _selectedId})
+      });
+
+      var res = await r.json();
+
+      if(res.error){
+        Messages.sys('⚠ Could not switch session: ' + res.error, 'err');
+        UI.closeAll();
+        return;
+      }
+
+      Agent.switchSession(_selectedId, res.events || []);
+      UI.closeAll();
+    }catch(e){
+      Messages.sys('⚠ Session switch failed: ' + (e.message || e), 'err');
+      UI.closeAll();
+    }
+  }
+
+  return {load, switchSelected};
 })();
 
 // ─────────────────────────────────────────────────────────────────────────────
