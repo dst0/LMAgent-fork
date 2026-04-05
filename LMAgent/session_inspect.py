@@ -1,4 +1,7 @@
+import hashlib
 import json
+
+NO_STATUS_VERSION = "-1"
 
 
 def build_readable_history(messages, strip_thinking_func):
@@ -51,3 +54,17 @@ def load_session_inspect_payload(
             "metadata": metadata,
         },
     }
+
+
+def compute_status_version(payload):
+    canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str)
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()[:12]
+
+
+def build_versioned_status_payload(payload, requested_version, *, sid=None):
+    version = compute_status_version(payload)
+    if requested_version and requested_version != NO_STATUS_VERSION and requested_version == version:
+        return {"status": "no_changes", "changed": False, "version": version, "session_id": sid}
+    data = dict(payload)
+    data.update({"status": "ok", "changed": True, "version": version, "session_id": sid})
+    return data

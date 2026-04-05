@@ -5,7 +5,12 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "LMAgent"))
 
-from session_inspect import build_readable_history, load_session_inspect_payload
+from session_inspect import (
+    build_readable_history,
+    build_versioned_status_payload,
+    compute_status_version,
+    load_session_inspect_payload,
+)
 
 
 class _TaskState:
@@ -112,6 +117,33 @@ class SessionInspectTests(unittest.TestCase):
                 session_manager_cls=_MissingSessionManager,
                 strip_thinking_func=lambda content: (content, ""),
             )
+
+    def test_build_versioned_status_payload_returns_no_changes_for_same_version(self):
+        payload = {"todos": {"total": 1}, "history": {"messages": []}}
+        version = compute_status_version(payload)
+
+        versioned = build_versioned_status_payload(payload, version, sid="session-1")
+
+        self.assertEqual(
+            versioned,
+            {
+                "status": "no_changes",
+                "changed": False,
+                "version": version,
+                "session_id": "session-1",
+            },
+        )
+
+    def test_build_versioned_status_payload_includes_full_payload_for_new_version(self):
+        payload = {"todos": {"total": 1}, "history": {"messages": []}}
+
+        versioned = build_versioned_status_payload(payload, "-1", sid="session-1")
+
+        self.assertTrue(versioned["changed"])
+        self.assertEqual(versioned["status"], "ok")
+        self.assertEqual(versioned["session_id"], "session-1")
+        self.assertEqual(versioned["todos"]["total"], 1)
+        self.assertIn("version", versioned)
 
 
 if __name__ == "__main__":

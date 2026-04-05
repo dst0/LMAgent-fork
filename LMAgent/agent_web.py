@@ -49,7 +49,11 @@ from collections import defaultdict
 from pathlib import Path
 
 from flask import Flask, Response, jsonify, request
-from session_inspect import build_readable_history, load_session_inspect_payload
+from session_inspect import (
+    build_readable_history,
+    build_versioned_status_payload,
+    load_session_inspect_payload,
+)
 
 try:
     from PIL import Image as _PIL_Image
@@ -1492,6 +1496,28 @@ def status():
 @app.route("/sessions")
 @_require_auth
 def sessions():
+    def _build_micro_session(session_summary):
+        return {
+            "id": session_summary["id"],
+            "task": session_summary.get("task", ""),
+            "created": session_summary.get("created", ""),
+            "status": session_summary.get("status", "unknown"),
+            "iterations": session_summary.get("iterations", 0),
+            "parent": session_summary.get("parent"),
+            "todos": ({
+                "completed": session_summary["todos"].get("completed", 0),
+                "total": session_summary["todos"].get("total", 0),
+            } if session_summary.get("todos") else None),
+            "plan": ({
+                "completed": session_summary["plan"].get("completed", 0),
+                "total": session_summary["plan"].get("total", 0),
+            } if session_summary.get("plan") else None),
+            "task_state": ({
+                "processed_count": session_summary["task_state"].get("processed_count", 0),
+                "total_count": session_summary["task_state"].get("total_count", 0),
+            } if session_summary.get("task_state") else None),
+        }
+
     mgr  = SessionManager(WORKSPACE)
     sess = mgr.list_recent(20)
     with _session_lock:
@@ -1500,7 +1526,10 @@ def sessions():
     for s in sess:
         if s["status"] == "active" and not (agent_running and s["id"] == cur_sid):
             s["status"] = "idle"
-    return jsonify({"sessions": sess, "current_session_id": cur_sid})
+    micro_sessions = [_build_micro_session(s) for s in sess]
+    payload = {"sessions": micro_sessions, "current_session_id": cur_sid}
+    version = request.args.get("version", "").strip()
+    return jsonify(build_versioned_status_payload(payload, version))
 
 
 @app.route("/session/switch", methods=["POST"])
@@ -1773,7 +1802,7 @@ def session_inspect():
     if not sid:
         return jsonify({"error": "no active session"}), 400
     try:
-        return jsonify(load_session_inspect_payload(
+        payload = load_session_inspect_payload(
             WORKSPACE,
             sid,
             todo_manager_cls=TodoManager,
@@ -1781,7 +1810,9 @@ def session_inspect():
             plan_manager_cls=PlanManager,
             session_manager_cls=SessionManager,
             strip_thinking_func=strip_thinking,
-        ))
+        )
+        version = request.args.get("version", "").strip()
+        return jsonify(build_versioned_status_payload(payload, version, sid=sid))
     except LookupError:
         return jsonify({"error": "session not found"}), 404
     except Exception as e:
