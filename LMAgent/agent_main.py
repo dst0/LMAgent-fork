@@ -546,6 +546,13 @@ def run_agent(
     final_answer       = ""
     iteration          = 0
     caller_forced_auto = (permission_mode == PermissionMode.AUTO)
+    run_started_at     = time.perf_counter()
+    timing_stats: Dict[str, Any] = {
+        "started_at": datetime.now().isoformat(),
+        "llm_calls": 0,
+        "llm_seconds": [],
+        "iteration_seconds": [],
+    }
 
     _base_stream_cb: Optional[Callable[[str], None]] = None
     if mode == "interactive":
@@ -576,6 +583,28 @@ def run_agent(
         elif event_type == "iteration":   Log.info(f"\nIteration {data.get('n')}/{Config.MAX_ITERATIONS}")
         elif event_type == "waiting":     Log.wait(f"Sleeping until {data.get('resume_after')}: {data.get('reason')}")
 
+    def _timing_snapshot() -> Dict[str, Any]:
+        def _avg(samples: List[float]) -> float:
+            return round(sum(samples) / len(samples), 3) if samples else 0.0
+
+        def _max(samples: List[float]) -> float:
+            return round(max(samples), 3) if samples else 0.0
+
+        llm_samples = timing_stats["llm_seconds"]
+        iter_samples = timing_stats["iteration_seconds"]
+        elapsed = time.perf_counter() - run_started_at
+        return {
+            "started_at": timing_stats["started_at"],
+            "elapsed_seconds": round(elapsed, 3),
+            "llm_calls": timing_stats["llm_calls"],
+            "avg_llm_seconds": _avg(llm_samples),
+            "max_llm_seconds": _max(llm_samples),
+            "avg_iteration_seconds": _avg(iter_samples),
+            "max_iteration_seconds": _max(iter_samples),
+            "latest_llm_seconds": round(llm_samples[-1], 3) if llm_samples else 0.0,
+            "latest_iteration_seconds": round(iter_samples[-1], 3) if iter_samples else 0.0,
+        }
+
     session_mgr = SessionManager(workspace)
     state_mgr   = StateManager(workspace)
 
@@ -585,7 +614,8 @@ def run_agent(
         if not session_data:
             emit("error", {"message": f"Session not found: {resume_session}"})
             return AgentResult(status="error", final_answer="Session not found.",
-                               events=events, session_id=resume_session, iterations=0)
+                               events=events, session_id=resume_session, iterations=0,
+                               timing=_timing_snapshot())
 
         messages, metadata = session_data
         iteration          = metadata.get("iterations", 0)
@@ -633,7 +663,8 @@ def run_agent(
                     if input(colored("\nProceed? [y/n]: ", Colors.YELLOW)).lower().strip() \
                             not in ("y", "yes"):
                         return AgentResult(status="cancelled", final_answer="Plan not approved.",
-                                           events=events, session_id="", iterations=0)
+                                           events=events, session_id="", iterations=0,
+                                           timing=_timing_snapshot())
                     Log.plan("Plan approved — starting execution")
                 emit("plan", {"plan": plan_data})
                 emit("log", {"message": "Plan approved"})
@@ -690,8 +721,11 @@ def run_agent(
     if resume_session:
         loaded = task_state_mgr.load()
         if loaded:
-            emit("log", {"message": (f"Task state loaded: "
-                                     f"{loaded.processed_count}/{loaded.total_count} processed")})
+            emit("log", {"message": (
+                f"Task state loaded: {loaded.processed_count}/{loaded.total_count} processed"
+                if loaded.total_count > 0 else
+                "Task state loaded: not initialized yet"
+            )})
 
     if not resume_session and plan_first and plan_data:
         plan_mgr.create(plan_data)
@@ -771,7 +805,8 @@ def run_agent(
                     return AgentResult(status="error",
                                        final_answer=f"Agent stuck: {loop_msg}",
                                        events=events, session_id=session_id,
-                                       iterations=iteration)
+                                       iterations=iteration,
+                                       timing=_timing_snapshot())
                 messages.append({
                     "role": "user",
                     "content": f"⚠️ {loop_msg}\nIf the task is done, say TASK_COMPLETE.",
@@ -781,13 +816,63 @@ def run_agent(
                 _save_state()
 
             _inject_context()
+            current_todo = next(
+                (t for t in todo_mgr.list_all().get("todos", []) if t.get("status") == "in_progress"),
+                None,
+            ) if Config.ENABLE_TODO_TRACKING else None
+            current_step = None
+            if Config.ENABLE_PLAN_ENFORCEMENT and plan_mgr.plan:
+                current_step = next(
+                    (s for s in plan_mgr.plan.get("steps", []) if s.get("status") == "in_progress"),
+                    None,
+                )
+            progress_payload = {
+                "iteration": iteration,
+                "todo": (current_todo or {}).get("description", ""),
+                "plan_step": (current_step or {}).get("description", ""),
+            }
+            if task_state_mgr.current_state and task_state_mgr.current_state.total_count > 0:
+                progress_payload["objective"] = task_state_mgr.current_state.objective
+                progress_payload["task_progress"] = (
+                    f"{task_state_mgr.current_state.processed_count}/"
+                    f"{task_state_mgr.current_state.total_count}"
+                )
+                progress_payload["next_action"] = task_state_mgr.current_state.next_action
+            emit("progress", progress_payload)
             messages = compact_messages(messages)
             _stream_cb.reset()
 
             _effective_stream_cb = _stream_cb if mode == "interactive" else None
-
+            iteration_started = time.perf_counter()
+            emit("activity", {
+                "kind": "llm_wait",
+                "iteration": iteration,
+                "message": "Waiting for model response",
+            })
+            llm_started = time.perf_counter()
             response = LLMClient.call(messages, available_tools,
                                       stream_callback=_effective_stream_cb)
+            llm_elapsed = time.perf_counter() - llm_started
+            timing_stats["llm_calls"] += 1
+            timing_stats["llm_seconds"].append(llm_elapsed)
+            emit("timing", {
+                "kind": "llm",
+                "iteration": iteration,
+                "seconds": round(llm_elapsed, 3),
+                "stats": _timing_snapshot(),
+            })
+            if llm_elapsed >= Config.SLOW_LLM_CALL_SECONDS:
+                emit("alert", {
+                    "level": "warn",
+                    "kind": "slow_llm",
+                    "iteration": iteration,
+                    "icon": "⚠",
+                    "message": (
+                        f"LLM response is slow ({llm_elapsed:.1f}s). "
+                        "You can ping it to decide now or retry with guardrails."
+                    ),
+                    "actions": ["decide", "retry_guardrails"],
+                })
 
             if "error" in response:
                 emit("error", {"message": f"LLM error: {response['error']}"})
@@ -795,10 +880,20 @@ def run_agent(
                     status="error",
                     final_answer=f"LLM error: {response['error']}",
                     events=events, session_id=session_id, iterations=iteration,
+                    timing=_timing_snapshot(),
                 )
 
             content    = response.get("content", "")
             tool_calls = response.get("tool_calls") or []
+            emit("activity", {
+                "kind": "llm_result",
+                "iteration": iteration,
+                "message": (
+                    f"Model responded with {len(tool_calls)} tool call(s)"
+                    if tool_calls else
+                    ("Model is drafting an answer" if content else "Model returned no output")
+                ),
+            })
 
             # ── BUG1 FIX: empty reply nudge ───────────────────────────────────
             # Previously: silently incremented counter and continued, giving the
@@ -847,6 +942,7 @@ def run_agent(
                                   f"Reason: {wait_state.reason}"),
                     events=events, session_id=session_id, iterations=iteration,
                     wait_until=wait_state.resume_after,
+                    timing=_timing_snapshot(),
                 )
 
             assistant_msg: Dict[str, Any] = {"role": "assistant"}
@@ -929,6 +1025,7 @@ def run_agent(
                 return AgentResult(
                     status="completed", final_answer=final_answer,
                     events=events, session_id=session_id, iterations=iteration,
+                    timing=_timing_snapshot(),
                 )
 
             # ── BUG2 FIX: post-tool stall nudge ──────────────────────────────
@@ -962,11 +1059,33 @@ def run_agent(
             if Config.AUTO_SAVE_SESSION and iteration % 5 == 0:
                 _save_session("active")
 
+            iteration_elapsed = time.perf_counter() - iteration_started
+            timing_stats["iteration_seconds"].append(iteration_elapsed)
+            emit("timing", {
+                "kind": "iteration",
+                "iteration": iteration,
+                "seconds": round(iteration_elapsed, 3),
+                "stats": _timing_snapshot(),
+            })
+            if iteration_elapsed >= Config.SLOW_ITERATION_SECONDS:
+                emit("alert", {
+                    "level": "warn",
+                    "kind": "slow_iteration",
+                    "iteration": iteration,
+                    "icon": "⚠",
+                    "message": (
+                        f"Iteration {iteration} is slow ({iteration_elapsed:.1f}s). "
+                        "Consider asking the model to decide now or retry with guardrails."
+                    ),
+                    "actions": ["decide", "retry_guardrails"],
+                })
+
         emit("warning", {"message": f"Reached max iterations ({Config.MAX_ITERATIONS})"})
         return AgentResult(
             status="max_iterations",
             final_answer=final_answer or "Max iterations reached without completing.",
             events=events, session_id=session_id, iterations=iteration,
+            timing=_timing_snapshot(),
         )
 
     except KeyboardInterrupt:
@@ -976,13 +1095,15 @@ def run_agent(
             _save_session("interrupted")
         return AgentResult(status="interrupted",
                            final_answer=final_answer or "Interrupted.",
-                           events=events, session_id=session_id, iterations=iteration)
+                           events=events, session_id=session_id, iterations=iteration,
+                           timing=_timing_snapshot())
 
     except Exception as e:
         emit("error", {"message": f"Fatal error: {e}"})
         traceback.print_exc()
         return AgentResult(status="error", final_answer=f"Fatal error: {e}",
-                           events=events, session_id=session_id, iterations=iteration)
+                           events=events, session_id=session_id, iterations=iteration,
+                           timing=_timing_snapshot())
 
     finally:
         mcp_manager.close_all()

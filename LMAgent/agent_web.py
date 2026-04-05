@@ -514,6 +514,7 @@ _NO_SESSION_KEY = "_none_"
 _REPLAY_KINDS   = frozenset({
     "user", "token", "thinking", "tool", "status",
     "iteration", "done", "error", "session", "plan",
+    "activity", "progress", "timing", "alert",
 })
 
 
@@ -1074,6 +1075,11 @@ def _push_event(event, stop_event, last_status: list, flush_thinking=None) -> No
     if etype == "tool_call":
         if flush_thinking:
             flush_thinking()
+        _broadcast(("activity", {
+            "kind": "tool_call",
+            "message": f"Running {edata.get('name', '?')}",
+            "args_preview": edata.get("args_preview", "")[:120],
+        }))
         _broadcast(("tool", {
             "phase": "call",
             "name": edata.get("name", "?"),
@@ -1081,6 +1087,13 @@ def _push_event(event, stop_event, last_status: list, flush_thinking=None) -> No
         }))
 
     elif etype == "tool_result":
+        _broadcast(("activity", {
+            "kind": "tool_result",
+            "message": (
+                f"{edata.get('name', '')} finished"
+                + (f": {_tool_outcome_text(edata)[:120]}" if _tool_outcome_text(edata) else "")
+            ),
+        }))
         _broadcast(("tool", {
             "phase": "result",
             "name": edata.get("name", ""),
@@ -1092,17 +1105,43 @@ def _push_event(event, stop_event, last_status: list, flush_thinking=None) -> No
     elif etype == "iteration":
         if flush_thinking:
             flush_thinking()
+        _broadcast(("activity", {
+            "kind": "iteration",
+            "message": f"Starting iteration {edata.get('n')}/{edata.get('max')}",
+            "iteration": edata.get("n"),
+        }))
         _broadcast(("iteration", f"{edata.get('n')}/{edata.get('max')}"))
         _schedule_status_push()
+
+    elif etype == "activity":
+        _broadcast(("activity", edata))
+
+    elif etype == "progress":
+        _broadcast(("progress", edata))
+        _schedule_status_push()
+
+    elif etype == "timing":
+        _broadcast(("timing", edata))
+
+    elif etype == "alert":
+        _broadcast(("alert", edata))
 
     elif etype in ("log", "warning", "error"):
         msg = edata.get("message") or edata.get("error") or ""
         if msg and (etype == "error" or (not _is_noisy(msg) and msg != last_status[0])):
             last_status[0] = msg
             _broadcast(("status", msg[:120]))
+            _broadcast(("activity", {
+                "kind": etype,
+                "message": msg[:160],
+            }))
         _schedule_status_push()
 
     elif etype == "waiting":
+        _broadcast(("activity", {
+            "kind": "waiting",
+            "message": f"Waiting until {edata.get('resume_after')}",
+        }))
         _broadcast(("status", f"waiting until {edata.get('resume_after')}"))
         _schedule_status_push()
 
@@ -1113,6 +1152,10 @@ def _push_event(event, stop_event, last_status: list, flush_thinking=None) -> No
         _schedule_status_push()
 
     elif etype == "complete":
+        _broadcast(("activity", {
+            "kind": "complete",
+            "message": f"Done — {edata.get('reason', '')}",
+        }))
         _broadcast(("status", f"done — {edata.get('reason', '')}"))
         _schedule_status_push()
 
@@ -1232,7 +1275,7 @@ def _execute_agent(message, session_id, request_id, stop_ev,
 # =============================================================================
 
 _TOOL_CATEGORIES = {
-    "Files":      ["read", "write", "edit", "glob", "grep", "ls", "mkdir"],
+    "Files":      ["read", "file_info", "outline", "write", "edit", "glob", "grep", "ls", "mkdir"],
     "Git":        ["git_status", "git_diff", "git_add", "git_commit", "git_branch"],
     "System":     ["shell", "get_time"],
     "Tasks":      ["todo_add", "todo_list", "task"],

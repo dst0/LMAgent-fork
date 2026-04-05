@@ -12,6 +12,7 @@ but now routes through BCA. New tools: delegate, decompose, report_result.
 """
 
 import base64
+import ast
 import json
 import os
 import re
@@ -268,7 +269,170 @@ def tool_get_time(workspace: Path) -> Dict[str, Any]:
     }
 
 
-def tool_read(workspace: Path, path: str) -> Dict[str, Any]:
+def _slice_lines(content: str, start_line: int, max_lines: int) -> Tuple[str, int, int, int]:
+    lines = content.splitlines()
+    total_lines = len(lines) or 1
+    start = max(1, start_line or 1)
+    if start > total_lines:
+        return "", total_lines, start, total_lines
+    if max_lines and max_lines > 0:
+        end = min(total_lines, start + max_lines - 1)
+    else:
+        end = total_lines
+    snippet = "\n".join(lines[start - 1:end])
+    if content.endswith("\n") and end == total_lines:
+        # Preserve the original trailing newline when the slice reaches EOF.
+        snippet += "\n"
+    return snippet, total_lines, start, end
+
+
+def _read_advice(path: str, file_size: int, truncated: bool, total_lines: int) -> str:
+    advice = []
+    if file_size >= Config.LARGE_FILE_THRESHOLD:
+        advice.append(
+            f"{path} is large ({file_size} bytes, {total_lines} lines). "
+            "Use file_info/outline first, grep for symbols, or read with start_line/max_lines."
+        )
+    if truncated:
+        advice.append("Narrow the next read instead of requesting the whole file again.")
+    return " ".join(advice)
+
+
+def _outline_python(content: str, max_items: int) -> Tuple[List[Dict[str, Any]], bool]:
+    try:
+        tree = ast.parse(content)
+    except SyntaxError:
+        return [], False
+    items: List[Dict[str, Any]] = []
+
+    class _Visitor(ast.NodeVisitor):
+        def __init__(self) -> None:
+            self.parents: List[str] = []
+
+        def _push(self, node: ast.AST, kind: str) -> None:
+            if len(items) >= max_items:
+                return
+            items.append({
+                "name": getattr(node, "name", "<anonymous>"),
+                "kind": kind,
+                "line_start": getattr(node, "lineno", 0),
+                "line_end": getattr(node, "end_lineno", getattr(node, "lineno", 0)),
+                "parent": ".".join(self.parents) if self.parents else "",
+            })
+
+        def visit_ClassDef(self, node: ast.ClassDef) -> None:
+            self._push(node, "class")
+            self.parents.append(node.name)
+            self.generic_visit(node)
+            self.parents.pop()
+
+        def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
+            self._push(node, "function")
+            self.parents.append(node.name)
+            self.generic_visit(node)
+            self.parents.pop()
+
+        def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:
+            self._push(node, "async_function")
+            self.parents.append(node.name)
+            self.generic_visit(node)
+            self.parents.pop()
+
+    _Visitor().visit(tree)
+    return items, True
+
+
+_OUTLINE_PATTERNS: List[Tuple[str, re.Pattern[str]]] = [
+    ("function", re.compile(r'^\s*(?:def|async\s+def|function)\s+([A-Za-z_]\w*)')),
+    ("class", re.compile(r'^\s*class\s+([A-Za-z_]\w*)')),
+    ("function", re.compile(r'^\s*(?:const|let|var)\s+([A-Za-z_]\w*)\s*=\s*(?:async\s*)?(?:\([^)]*\)|[A-Za-z_]\w*)\s*=>')),
+    ("function", re.compile(r'^\s*func\s+([A-Za-z_]\w*)')),
+]
+
+
+def _outline_fallback(content: str, max_items: int) -> List[Dict[str, Any]]:
+    items: List[Dict[str, Any]] = []
+    for lineno, line in enumerate(content.splitlines(), 1):
+        for kind, pattern in _OUTLINE_PATTERNS:
+            match = pattern.match(line)
+            if match:
+                items.append({
+                    "name": match.group(1),
+                    "kind": kind,
+                    "line_start": lineno,
+                    "line_end": lineno,
+                    "parent": "",
+                })
+                break
+        if len(items) >= max_items:
+            break
+    return items
+
+
+def tool_file_info(workspace: Path, path: str) -> Dict[str, Any]:
+    ok, err, fp = Safety.validate_path(workspace, path, must_exist=True)
+    if not ok:
+        return {"success": False, "error": err}
+    if not fp.is_file():
+        return {"success": False, "error": "Not a file"}
+    stat = fp.stat()
+    is_binary = fp.suffix.lower() in Config.BINARY_EXTS
+    info: Dict[str, Any] = {
+        "success": True,
+        "path": path,
+        "file_size": stat.st_size,
+        "is_binary": is_binary,
+        "is_large": stat.st_size >= Config.LARGE_FILE_THRESHOLD,
+        "extension": fp.suffix.lower(),
+    }
+    if not is_binary:
+        try:
+            content = fp.read_text(encoding="utf-8", errors="replace")
+            info["total_lines"] = content.count("\n") + 1
+        except Exception as e:
+            info["read_error"] = str(e)
+    return info
+
+
+def tool_outline(workspace: Path, path: str, max_items: int = 0) -> Dict[str, Any]:
+    ok, err, fp = Safety.validate_path(workspace, path, must_exist=True)
+    if not ok:
+        return {"success": False, "error": err}
+    if not fp.is_file():
+        return {"success": False, "error": "Not a file"}
+    if fp.suffix.lower() in Config.BINARY_EXTS:
+        return {"success": False, "error": "Cannot outline binary file"}
+    limit = max_items if max_items and max_items > 0 else Config.OUTLINE_MAX_ITEMS
+    try:
+        content = fp.read_text(encoding="utf-8", errors="replace")
+        symbols: List[Dict[str, Any]] = []
+        parsed = False
+        if fp.suffix.lower() == ".py":
+            symbols, parsed = _outline_python(content, limit)
+        parser = "python-ast" if parsed else "regex"
+        if not symbols:
+            symbols = _outline_fallback(content, limit)
+        return {
+            "success": True,
+            "path": path,
+            "parser": parser,
+            "file_size": fp.stat().st_size,
+            "total_lines": content.count("\n") + 1,
+            "symbols": symbols,
+            "total_symbols": len(symbols),
+            "truncated": len(symbols) >= limit,
+            "advice": "Use read(path=..., start_line=..., max_lines=...) to inspect only the relevant symbol body.",
+        }
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+def tool_read(
+    workspace: Path,
+    path: str,
+    start_line: int = 1,
+    max_lines: int = 0,
+) -> Dict[str, Any]:
     ok, err, fp = Safety.validate_path(workspace, path, must_exist=True)
     if not ok:
         return {"success": False, "error": err}
@@ -277,10 +441,34 @@ def tool_read(workspace: Path, path: str) -> Dict[str, Any]:
     if fp.suffix.lower() in Config.BINARY_EXTS:
         return {"success": False, "error": "Cannot read binary file"}
     try:
+        stat = fp.stat()
         content = fp.read_text(encoding="utf-8", errors="replace")
-        return {"success": True,
-                "content": truncate_output(content, Config.MAX_FILE_READ, path),
-                "lines":   content.count("\n") + 1}
+        total_lines = content.count("\n") + 1
+        snippet, total_lines, line_start, line_end = _slice_lines(content, start_line, max_lines)
+        auto_preview = False
+        if stat.st_size >= Config.LARGE_FILE_THRESHOLD and not max_lines:
+            snippet, total_lines, line_start, line_end = _slice_lines(
+                content, start_line or 1, Config.DEFAULT_READ_LINES
+            )
+            auto_preview = True
+        rendered = truncate_output(snippet, Config.MAX_FILE_READ, path)
+        partial = line_start > 1 or line_end < total_lines
+        truncated = auto_preview or (rendered != snippet)
+        advice = _read_advice(path, stat.st_size, truncated, total_lines)
+        return {
+            "success": True,
+            "path": path,
+            "content": rendered,
+            "lines": total_lines,
+            "file_size": stat.st_size,
+            "line_start": line_start,
+            "line_end": line_end,
+            "returned_lines": max(0, line_end - line_start + 1) if snippet else 0,
+            "partial": partial,
+            "truncated": truncated,
+            "is_large": stat.st_size >= Config.LARGE_FILE_THRESHOLD,
+            "advice": advice,
+        }
     except Exception as e:
         return {"success": False, "error": str(e)}
 
@@ -400,7 +588,8 @@ def tool_ls(workspace: Path, path: str = ".") -> Dict[str, Any]:
             stat = item.stat()
             entries.append({"name": item.name,
                              "type": "dir" if item.is_dir() else "file",
-                             "size": stat.st_size if item.is_file() else 0})
+                             "size": stat.st_size if item.is_file() else 0,
+                             "is_large": bool(item.is_file() and stat.st_size >= Config.LARGE_FILE_THRESHOLD)})
         return {"success": True, "entries": entries,
                 "total":     len(all_entries),
                 "truncated": len(all_entries) > Config.MAX_LS_ENTRIES}
@@ -801,9 +990,28 @@ TOOL_SCHEMAS: List[Dict[str, Any]] = [
         "parameters": {"type": "object", "properties": {}}}},
 
     {"type": "function", "function": {
-        "name": "read", "description": "Read file contents (workspace only).",
+        "name": "read",
+        "description": (
+            "Read file contents (workspace only). Large files return metadata plus a narrowed slice. "
+            "Use start_line/max_lines for targeted reads instead of brute-forcing huge files."
+        ),
+        "parameters": {"type": "object",
+                       "properties": {"path": {"type": "string"},
+                                      "start_line": {"type": "integer"},
+                                      "max_lines": {"type": "integer"}},
+                       "required": ["path"]}}},
+    {"type": "function", "function": {
+        "name": "file_info",
+        "description": "Get file size/line-count metadata before deciding how to inspect a file.",
         "parameters": {"type": "object",
                        "properties": {"path": {"type": "string"}},
+                       "required": ["path"]}}},
+    {"type": "function", "function": {
+        "name": "outline",
+        "description": "Return top-level code structure with symbol names and line ranges for a source file.",
+        "parameters": {"type": "object",
+                       "properties": {"path": {"type": "string"},
+                                      "max_items": {"type": "integer"}},
                        "required": ["path"]}}},
     {"type": "function", "function": {
         "name": "write", "description": "Create or overwrite a file (workspace only).",
@@ -948,6 +1156,8 @@ TOOL_HANDLERS: Dict[str, Callable] = {
     "get_time":           tool_get_time,
     "shell":              tool_shell,
     "read":               tool_read,
+    "file_info":          tool_file_info,
+    "outline":            tool_outline,
     "write":              tool_write,
     "edit":               tool_edit,
     "glob":               tool_glob,
@@ -978,7 +1188,7 @@ TOOL_HANDLERS: Dict[str, Callable] = {
 
 _REQUIRED_ARG_TOOLS = frozenset({
     "shell",
-    "write", "read", "edit", "glob", "grep", "ls", "mkdir",
+    "write", "read", "file_info", "outline", "edit", "glob", "grep", "ls", "mkdir",
     "todo_add",
     "git_add", "git_commit", "git_branch", "git_diff",
     "task", "delegate", "decompose", "report_result",

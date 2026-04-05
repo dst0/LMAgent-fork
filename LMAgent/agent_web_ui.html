@@ -314,6 +314,25 @@ header{
 #platform-badge.whatsapp{color:#25d366;border-color:#0f3020}
 #platform-badge.sms{color:var(--green);border-color:#0f3020}
 
+/* ── Live activity ── */
+#activity-bar{
+  display:none;align-items:flex-start;justify-content:space-between;gap:10px;
+  padding:8px 14px;border-top:1px solid var(--border);background:var(--surface2);
+  flex-shrink:0;
+}
+#activity-bar.show{display:flex}
+#activity-main{display:flex;gap:8px;min-width:0;flex:1}
+#activity-icon{font-size:13px;line-height:1.2;flex-shrink:0}
+#activity-copy{min-width:0;flex:1}
+#activity-title{font-size:11px;color:var(--text);font-family:var(--sans);font-weight:600;line-height:1.35}
+#activity-detail,#activity-alert{
+  font-size:10px;color:var(--text3);line-height:1.45;white-space:pre-wrap;word-break:break-word;
+}
+#activity-alert{color:var(--amber);margin-top:3px}
+#activity-actions{display:none;gap:5px;flex-shrink:0;align-items:center}
+#activity-actions.show{display:flex}
+#activity-actions .btn{padding:4px 8px}
+
 /* ── Input area ── */
 #input-area{
   display:flex;flex-direction:column;padding:8px 14px 10px;
@@ -641,6 +660,21 @@ header{
     <span id="iter-badge"></span>
     <span id="platform-badge"></span>
     <span id="mode-badge">auto</span>
+  </div>
+
+  <div id="activity-bar">
+    <div id="activity-main">
+      <span id="activity-icon">◌</span>
+      <div id="activity-copy">
+        <div id="activity-title">Idle</div>
+        <div id="activity-detail"></div>
+        <div id="activity-alert"></div>
+      </div>
+    </div>
+    <div id="activity-actions">
+      <button class="btn" onclick="Agent.nudgeDecide()">Decide now</button>
+      <button class="btn" onclick="Agent.nudgeRetry()">Retry guarded</button>
+    </div>
   </div>
 
   <div id="input-area">
@@ -1165,6 +1199,110 @@ const Status = (function(){
     else{ el.className = ''; }
   }
   return {set, iter, mode, platform};
+})();
+
+const LiveActivity = (function(){
+  var ACTIVITY_IDLE_ALERT_MS = 12000;
+  var state = {
+    title: 'Idle',
+    detail: '',
+    alert: '',
+    icon: '◌',
+    running: false,
+    progress: {},
+    timing: {},
+    lastEventAt: 0,
+    idleAlert: ''
+  };
+  function _el(id){ return document.getElementById(id); }
+  function _touch(){ state.lastEventAt = Date.now(); }
+  function _composeDetail(){
+    var parts = [];
+    if(state.progress.iteration) parts.push('iteration ' + state.progress.iteration);
+    if(state.progress.todo) parts.push('todo: ' + state.progress.todo);
+    if(state.progress.plan_step) parts.push('plan: ' + state.progress.plan_step);
+    if(state.progress.task_progress) parts.push('task: ' + state.progress.task_progress);
+    if(state.progress.next_action) parts.push('next: ' + state.progress.next_action);
+    if(state.detail) parts.unshift(state.detail);
+    if(state.timing.latest_llm_seconds) parts.push('llm ' + state.timing.latest_llm_seconds + 's');
+    return parts.filter(Boolean).join(' · ');
+  }
+  function _render(){
+    var bar = _el('activity-bar');
+    var show = state.running || !!state.alert || !!state.idleAlert;
+    bar.classList.toggle('show', show);
+    _el('activity-icon').textContent = state.icon || '◌';
+    _el('activity-title').textContent = state.title || (state.running ? 'Working' : 'Idle');
+    _el('activity-detail').textContent = _composeDetail();
+    _el('activity-alert').textContent = state.alert || state.idleAlert || '';
+    _el('activity-actions').classList.toggle('show', !!(state.running || state.alert || state.idleAlert));
+  }
+  function begin(){
+    state.running = true;
+    state.title = 'Starting task';
+    state.detail = '';
+    state.alert = '';
+    state.idleAlert = '';
+    state.icon = '◌';
+    state.progress = {};
+    state.timing = {};
+    _touch();
+    _render();
+  }
+  function reset(){
+    state.running = false;
+    state.title = 'Idle';
+    state.detail = '';
+    state.alert = '';
+    state.idleAlert = '';
+    state.icon = '◌';
+    state.progress = {};
+    state.timing = {};
+    _render();
+  }
+  function setActivity(data){
+    data = data || {};
+    state.running = true;
+    state.title = data.message || state.title || 'Working';
+    state.detail = data.args_preview || '';
+    state.icon = data.icon || (
+      data.kind === 'tool_call' ? '🛠' :
+      data.kind === 'tool_result' ? '✓' :
+      data.kind === 'llm_wait' ? '⏳' :
+      data.kind === 'llm_result' ? '✎' :
+      data.kind === 'warning' || data.kind === 'error' ? '⚠' : '◌'
+    );
+    state.idleAlert = '';
+    _touch();
+    _render();
+  }
+  function setProgress(data){
+    state.progress = data || {};
+    _touch();
+    _render();
+  }
+  function setTiming(data){
+    state.timing = (data && data.stats) || {};
+    _touch();
+    _render();
+  }
+  function setAlert(data){
+    data = data || {};
+    state.running = true;
+    state.alert = data.message || '';
+    state.icon = data.icon || '⚠';
+    _touch();
+    _render();
+  }
+  setInterval(function(){
+    if(!state.running || !state.lastEventAt) return;
+    var idleMs = Date.now() - state.lastEventAt;
+    state.idleAlert = idleMs >= ACTIVITY_IDLE_ALERT_MS
+      ? 'No visible activity for ' + Math.round(idleMs / 1000) + 's — nudge the model to decide now or retry with guardrails.'
+      : '';
+    _render();
+  }, 1000);
+  return {begin, reset, setActivity, setProgress, setTiming, setAlert};
 })();
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1732,6 +1870,7 @@ const Agent = (function(){
     Messages.showProgress(next === 'running');
     if(next === 'idle') Scroll.pin(); Scroll.update();
     next !== 'idle' ? ElapsedTimer.start() : ElapsedTimer.stop();
+    if(next === 'idle') LiveActivity.reset();
   }
 
   function handleEvent(evt){
@@ -1748,6 +1887,7 @@ const Agent = (function(){
         Replay.run(d.history);
       if(d.state === 'running' && state === 'idle'){
         transition('running'); Status.set('running…', 'run');
+        LiveActivity.begin();
       } else if(d.state === 'waiting' && state === 'idle'){
         transition('waiting'); Status.set('waiting — scheduled resume…', 'wait');
         Messages.sys('⏰ Session waiting — will resume automatically', 'warn');
@@ -1785,6 +1925,7 @@ const Agent = (function(){
     switch(evt.type){
       case 'token':
         Tools.endGroup(); if(!Stream.active()) Stream.start(); Stream.token(evt.data); _hadContent = true;
+        LiveActivity.setActivity({kind:'token', message:'Streaming answer', icon:'✎'});
         break;
       case 'thinking_live':
         if(evt.data && evt.data.phase === 'start') ThinkingStream.start();
@@ -1810,6 +1951,19 @@ const Agent = (function(){
       }
       case 'status':
         Status.set(evt.data, 'run');
+        LiveActivity.setActivity({kind:'status', message:String(evt.data || '')});
+        break;
+      case 'activity':
+        LiveActivity.setActivity(evt.data || {});
+        break;
+      case 'progress':
+        LiveActivity.setProgress(evt.data || {});
+        break;
+      case 'timing':
+        LiveActivity.setTiming(evt.data || {});
+        break;
+      case 'alert':
+        LiveActivity.setAlert(evt.data || {});
         break;
       case 'iteration':{
         var mi = String(evt.data).match(/(\d+)\/(\d+)/);
@@ -1864,6 +2018,7 @@ const Agent = (function(){
       body.appendChild(imgEl); imgEl.onload = function(){ URL.revokeObjectURL(img.previewURL); };
     }
     Scroll.pin(); transition('running'); Status.set('thinking…', 'run'); Tools.reset(); ThinkingStream.reset(); _hadContent = false; Messages.showProgress(true);
+    LiveActivity.begin();
     requestId = 'r' + Date.now() + Math.random().toString(36).slice(2,6);
     try{
       var resp = await fetch('/chat', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({message:fullText, session_id:sessionId, request_id:requestId})});
@@ -1947,12 +2102,27 @@ const Agent = (function(){
     Tools.reset(); Stream.reset(); ImageUpload.clear();
     document.getElementById('messages').innerHTML = '<div id="replay-banner"></div><div id="empty"><div class="empty-glyph">λ_</div><p>Send a message to start working</p><div class="hint">/ commands &nbsp;·&nbsp; ↑↓ history &nbsp;·&nbsp; drag image</div></div>';
     Status.set('ready',''); Status.iter('');
+    LiveActivity.reset();
     if(events && events.length) Replay.run(events);
     SessionInspect.loadSession(id, true);
     document.getElementById('msg-input').focus();
   }
 
-  return {sendOrStop, newSession, running, getSession:function(){ return sessionId; }, setSession, switchSession, _handle:handleEvent};
+  function nudgeDecide(){
+    Whisper.queue('Make a decision in the next iteration. If the task is done, output TASK_COMPLETE. If not, choose one concrete next action only.');
+    Messages.sys('💬 decide-now nudge queued', 'ok');
+  }
+  function nudgeRetry(){
+    Whisper.queue('Retry with guardrails: avoid broad reads or repeated loops, use file_info/outline/grep plus targeted reads, and if unsure choose the safest concrete step.');
+    Messages.sys('💬 guarded-retry nudge queued', 'ok');
+  }
+
+  return {
+    sendOrStop, newSession, running,
+    getSession:function(){ return sessionId; }, setSession, switchSession,
+    nudgeDecide, nudgeRetry,
+    _handle:handleEvent
+  };
 })();
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -2350,10 +2520,17 @@ const SessionInspect = (function(){
     if(data.error){ body.innerHTML = '<div class="si-empty">⚠ ' + _esc(data.error) + '</div>'; if(badge) badge.textContent = '!'; return; }
     var s = data.state;
     if(!s){ body.innerHTML = '<div class="si-empty">No task state.</div>'; if(badge) badge.textContent = '—'; return; }
+    var hasProgress = s.total_count > 0;
+    var hasDetails = !!(s.objective || s.next_action || s.last_error || s.last_updated || (s.remaining_queue && s.remaining_queue.length));
+    if(!hasProgress && !hasDetails){
+      body.innerHTML = '<div class="si-empty">Task state not initialized yet.</div>';
+      if(badge) badge.textContent = '—';
+      return;
+    }
     var pct = s.total_count > 0 ? Math.round(s.processed_count / s.total_count * 100) : 0;
-    if(badge) badge.textContent = s.processed_count + '/' + s.total_count;
+    if(badge) badge.textContent = hasProgress ? (s.processed_count + '/' + s.total_count) : '—';
     var html = '';
-    if(s.total_count > 0){
+    if(hasProgress){
       html += '<div class="si-progress"><div class="si-progress-bar"><div class="si-progress-fill" style="width:' + pct + '%"></div></div><span class="si-progress-label">' + s.processed_count + '/' + s.total_count + ' (' + pct + '%)</span></div>';
     }
     html += '<div class="si-kv">';
