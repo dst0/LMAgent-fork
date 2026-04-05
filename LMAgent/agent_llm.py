@@ -22,7 +22,6 @@ import re
 import sys
 import threading
 import time
-import copy
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
@@ -50,6 +49,7 @@ _llm_local = threading.local()
 
 _SUB_AGENT_TOOL_NAMES = frozenset({"write", "read", "edit", "ls", "glob", "grep", "shell"})
 _PLAN_TOOL_NAMES = frozenset({"ls", "read", "glob", "grep", "git_status"})
+_NO_USER_QUERY_ERR = "no user query found in messages"
 
 
 # =============================================================================
@@ -413,13 +413,12 @@ class LLMClient:
                         stream=True, timeout=Config.LLM_TIMEOUT,
                     )
                     resp_text_lower = (resp.text or "").lower()
-                if (resp.status_code == 400
-                        and "no user query found in messages" in resp_text_lower):
+                if resp.status_code == 400 and _NO_USER_QUERY_ERR in resp_text_lower:
                     Log.warning(
                         "Model template rejected tool-heavy history (no user query) — "
                         "retrying with compatibility user anchor"
                     )
-                    patched_payload = copy.deepcopy(payload)
+                    patched_payload = dict(payload)
                     patched_payload["messages"] = list(payload.get("messages") or []) + [{
                         "role": "user",
                         "content": (
@@ -431,8 +430,7 @@ class LLMClient:
                         Config.LLM_URL, json=patched_payload, headers=cls._headers(),
                         stream=True, timeout=Config.LLM_TIMEOUT,
                     )
-                    if (resp.status_code == 400
-                            and "no user query found in messages" in (resp.text or "").lower()):
+                    if resp.status_code == 400 and _NO_USER_QUERY_ERR in (resp.text or "").lower():
                         Log.error("Compatibility retry failed: backend still reports no user query")
                 if resp.status_code in (500, 503):
                     Log.warning(f"LLM returned {resp.status_code} — waiting for recovery")
