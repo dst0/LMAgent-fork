@@ -559,7 +559,7 @@ header{
       <button class="btn" onclick="UI.toggleFiles()">Files</button>
       <button class="btn accent" onclick="UI.toggleTools()">Tools</button>
       <button class="btn" onclick="UI.toggleSessions()">Sessions</button>
-      <button class="btn" onclick="UI.toggleInspect()" title="Inspect current session state">Inspect</button>
+      <button class="btn" onclick="UI.toggleInspect()" title="Session status">Status</button>
       <button class="btn" id="msg-btn" onclick="UI.toggleMessaging()"><span id="msg-btn-dot"></span>Msg</button>
       <button class="btn danger" onclick="Agent.newSession()">New</button>
     </div>
@@ -637,10 +637,10 @@ header{
   <div id="sessions-list"></div>
 </div>
 
-<!-- Session inspect panel -->
+<!-- Session status panel -->
 <div class="panel" id="session-inspect-panel">
   <div class="panel-hdr">
-    <span>Inspect</span>
+    <span>Status</span>
     <div style="display:flex;gap:4px;align-items:center">
       <button class="ft-icon-btn" onclick="SessionInspect.refresh()" title="Refresh">⟳</button>
       <button class="btn" onclick="UI.closeInspect()">✕</button>
@@ -670,7 +670,7 @@ header{
       <div class="si-section-body" id="si-tasks-body"><div class="si-empty">Loading…</div></div>
     </div>
     <!-- Plan section -->
-    <div class="si-section" id="si-plan-section">
+    <div class="si-section open" id="si-plan-section">
       <div class="si-section-hdr" onclick="SessionInspect.toggleSection('plan')">
         <span class="si-section-title">🗺 Plan</span>
         <span class="si-section-badge" id="si-plan-badge">—</span>
@@ -1872,26 +1872,29 @@ const SessionInspect = (function(){
     if(!sid) return;
     var panel = document.getElementById('session-inspect-panel');
     var panelOpen = panel && panel.classList.contains('open');
+    if(!panelOpen) return;
 
     if(evt.type === 'plan'){
       // Plan created/updated — render immediately from event data, then re-fetch for full state
-      if(panelOpen) _renderPlan({plan: typeof evt.data === 'object' ? evt.data : null});
+      _renderPlan({plan: typeof evt.data === 'object' ? evt.data : null});
       setTimeout(function(){ _fetchPlan(sid); }, 300);
     } else if(evt.type === 'tool'){
       var raw = String(evt.data || '');
-      var isResult = raw.startsWith('✓') || raw.startsWith('✗');
-      var toolName = isResult ? raw.slice(1).trim() : raw.split('(')[0].trim();
-      if(isResult){
-        if(_TODO_TOOLS.indexOf(toolName) !== -1) { setTimeout(function(){ _fetchTodos(sid); }, 200); }
-        if(_TASK_TOOLS.indexOf(toolName) !== -1) { setTimeout(function(){ _fetchTasks(sid); }, 200); }
-        if(_PLAN_TOOLS.indexOf(toolName) !== -1) { setTimeout(function(){ _fetchPlan(sid); }, 200); }
+      if(raw.startsWith('✓') || raw.startsWith('✗')){
+        // Any tool result may affect todos, tasks or plan — refresh all three
+        _lastRefresh = Date.now();
+        setTimeout(function(){ _fetchTodos(sid); _fetchTasks(sid); _fetchPlan(sid); }, 250);
       }
     } else if(evt.type === 'iteration'){
-      // On each iteration boundary, refresh todos + tasks (most likely to have changed)
-      if(panelOpen){ _fetchTodos(sid); _fetchTasks(sid); }
+      // Each iteration boundary — refresh everything so all sections stay current
+      _lastRefresh = Date.now();
+      _fetchAll(sid);
     } else if(evt.type === 'done' || evt.type === 'complete'){
       // Final state — refresh everything including history
-      setTimeout(function(){ _fetchAll(sid); }, 400);
+      setTimeout(function(){ _lastRefresh = Date.now(); _fetchAll(sid); }, 400);
+    } else if(evt.type === 'session'){
+      // Session changed while panel is open — switch to new session
+      if(evt.data && evt.data !== _sid){ _setSid(evt.data); _fetchAll(evt.data); }
     }
   }
 
@@ -2007,12 +2010,16 @@ const UI = (function(){
     toggleSessions:  function(){ _toggle('sessions-panel',         function(){ Sessions.load(); }); },
     toggleTools:     function(){ _toggle('tools-panel',            function(){ ToolsPanel.load(); }); },
     toggleMessaging: function(){ _toggle('messaging-panel',        function(){ Messaging.refresh(); }); },
-    toggleInspect:   function(){ _toggle('session-inspect-panel',  function(){ SessionInspect.refresh(); }); },
+    toggleInspect:   function(){
+      var p = document.getElementById('session-inspect-panel');
+      if(p.classList.contains('open')){ _closePanel('session-inspect-panel'); }
+      else { closeAll(); p.classList.add('open'); SessionInspect.refresh(); }
+    },
     closeFiles:     function(){ _closePanel('files-panel');            overlay().classList.remove('show'); },
     closeSessions:  function(){ _closePanel('sessions-panel');         overlay().classList.remove('show'); },
     closeTools:     function(){ _closePanel('tools-panel');            overlay().classList.remove('show'); },
     closeMessaging: function(){ _closePanel('messaging-panel');        overlay().classList.remove('show'); },
-    closeInspect:   function(){ _closePanel('session-inspect-panel'); overlay().classList.remove('show'); },
+    closeInspect:   function(){ _closePanel('session-inspect-panel'); },
     closeAll,
   };
 })();
