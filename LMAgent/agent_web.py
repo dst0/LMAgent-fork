@@ -636,13 +636,22 @@ def _web_dispatch_bca_tool(fn_name, args, workspace, brief=None):
             if v:
                 preview = str(v)[:50]
                 break
-        _broadcast(("tool", f"{fn_name}({preview})"))
+        _broadcast(("tool", {
+            "phase": "call",
+            "name": fn_name,
+            "args_preview": preview,
+        }))
 
     result = _orig_dispatch_bca_tool(fn_name, args, workspace, brief=brief)
 
     if fn_name not in _BCA_SILENT_TOOLS:
         ok = result.get("success", False)
-        _broadcast(("tool", f"{'✓' if ok else '✗'} {fn_name}"))
+        _broadcast(("tool", {
+            "phase": "result",
+            "name": fn_name,
+            "success": ok,
+            "outcome": str(result if ok else result.get("error", ""))[:200],
+        }))
 
     return result
 
@@ -957,12 +966,19 @@ def _push_event(event, stop_event, last_status: list, flush_thinking=None) -> No
     if etype == "tool_call":
         if flush_thinking:
             flush_thinking()
-        _broadcast(("tool",
-                    f"{edata.get('name','?')}({edata.get('args_preview','')[:50]})"))
+        _broadcast(("tool", {
+            "phase": "call",
+            "name": edata.get("name", "?"),
+            "args_preview": edata.get("args_preview", "")[:50],
+        }))
 
     elif etype == "tool_result":
-        _broadcast(("tool",
-                    f"{'✓' if edata.get('success') else '✗'} {edata.get('name','')}"))
+        _broadcast(("tool", {
+            "phase": "result",
+            "name": edata.get("name", ""),
+            "success": bool(edata.get("success")),
+            "outcome": edata.get("summary") or edata.get("error") or "",
+        }))
 
     elif etype == "iteration":
         if flush_thinking:
