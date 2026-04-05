@@ -1894,7 +1894,8 @@ const SessionInspect = (function(){
       setTimeout(function(){ _lastRefresh = Date.now(); _fetchAll(sid); }, 400);
     } else if(evt.type === 'session'){
       // Session changed while panel is open — switch to new session
-      if(evt.data && evt.data !== _sid){ _setSid(evt.data); _fetchAll(evt.data); }
+      var newSid = evt.data;
+      if(newSid && newSid !== _sid){ _setSid(newSid); _fetchAll(newSid); }
     }
   }
 
@@ -2012,6 +2013,7 @@ const UI = (function(){
     toggleMessaging: function(){ _toggle('messaging-panel',        function(){ Messaging.refresh(); }); },
     toggleInspect:   function(){
       var p = document.getElementById('session-inspect-panel');
+      if(!p) return;
       if(p.classList.contains('open')){ _closePanel('session-inspect-panel'); }
       else { closeAll(); p.classList.add('open'); SessionInspect.refresh(); }
     },
