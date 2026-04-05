@@ -2487,8 +2487,9 @@ const SessionInspect = (function(){
   }
 
   function _effectiveSid(){
-    if(_followCurrent) return Agent.getSession() || _sid;
-    return _sid || Agent.getSession();
+    var currentSid = Agent.getSession();
+    if(_followCurrent) return currentSid || null;
+    return _sid || currentSid;
   }
 
   function _setSid(id){
@@ -2810,7 +2811,7 @@ const SessionInspect = (function(){
       if(!_isPanelOpen()) return;
       // Push updates arrive over SSE now; this is only a slow fallback if an event is missed.
       var interval = Agent.running() ? 15000 : 30000;
-      if((Date.now() - _lastRefresh) >= interval) refresh(false);
+      if((Date.now() - _lastRefresh) >= interval) refresh();
     }, 1000);
   }
 
