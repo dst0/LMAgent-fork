@@ -151,6 +151,11 @@ Every call needs ALL required arguments:
 
 Unknown path? → ls or glob first, then act.
 
+Large file strategy:
+- Check size first with ls/file_info.
+- If a file is large or a read says truncated, do not re-read the whole file.
+- Use outline to find relevant symbols, grep to locate text, then read targeted line ranges.
+
 ---
 
 ## WORKFLOW
@@ -267,7 +272,7 @@ When stuck, output exactly:
 ---
 
 ## TOOLS
-Files:      read, write, edit, glob, grep, ls, mkdir
+Files:      read, file_info, outline, write, edit, glob, grep, ls, mkdir
 Shell:      shell (sandboxed — 30s timeout, 512MB memory default)
 Git:        git_status, git_diff, git_add, git_commit, git_branch
 Todos:      todo_add, todo_list

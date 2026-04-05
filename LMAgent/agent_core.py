@@ -158,6 +158,11 @@ class Config:
     MAX_FILE_READ    = int(os.getenv("MAX_FILE_READ",    "1000000"))
     MAX_GREP_RESULTS = int(os.getenv("MAX_GREP_RESULTS", "50"))
     MAX_LS_ENTRIES   = int(os.getenv("MAX_LS_ENTRIES",   "100"))
+    LARGE_FILE_THRESHOLD  = int(os.getenv("LARGE_FILE_THRESHOLD",  "250000"))
+    DEFAULT_READ_LINES    = int(os.getenv("DEFAULT_READ_LINES",    "220"))
+    OUTLINE_MAX_ITEMS     = int(os.getenv("OUTLINE_MAX_ITEMS",     "200"))
+    SLOW_LLM_CALL_SECONDS = float(os.getenv("SLOW_LLM_CALL_SECONDS", "12"))
+    SLOW_ITERATION_SECONDS = float(os.getenv("SLOW_ITERATION_SECONDS", "20"))
     # Features
     PERMISSION_MODE         = os.getenv("PERMISSION_MODE",         "normal")
     ENABLE_MCP              = _env_bool("ENABLE_MCP",              "true")
@@ -176,7 +181,10 @@ class Config:
         ".gz", ".tar", ".exe", ".dll", ".so", ".pyc", ".bin", ".dat",
         ".mp4", ".mp3", ".avi", ".mov", ".iso", ".dmg",
     })
-    READ_ONLY_TOOLS   = frozenset({"read", "ls", "glob", "grep", "git_status", "git_diff", "todo_list"})
+    READ_ONLY_TOOLS   = frozenset({
+        "read", "file_info", "outline", "ls", "glob", "grep",
+        "git_status", "git_diff", "todo_list",
+    })
     DESTRUCTIVE_TOOLS = frozenset({"write", "edit", "shell", "git_add", "git_commit",
                                     "git_branch", "todo_add", "todo_update", "todo_complete"})
 
@@ -1251,6 +1259,7 @@ class AgentResult:
     iterations:    int
     session_state: Optional[Dict[str, Any]] = None
     wait_until:    Optional[str] = None
+    timing:        Dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -1259,6 +1268,7 @@ class AgentResult:
             "events":        [{"type": e.type, "data": e.data, "timestamp": e.timestamp}
                               for e in self.events],
             "session_state": self.session_state, "wait_until":    self.wait_until,
+            "timing":        self.timing,
         }
 
 
