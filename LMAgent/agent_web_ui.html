@@ -806,23 +806,24 @@ function _esc(s){ return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').re
 
 // Extract the primary human-readable argument from a tool's JSON args string.
 // Returns a short display string (e.g. just the file path or command) or null.
+var _PRIMARY_ARG_FILE_TOOLS = {read:1,read_file:1,write:1,write_file:1,edit:1,edit_file:1,patch_file:1,
+  append_file:1,delete_file:1,remove_file:1,move_file:1,rename_file:1,copy_file:1,
+  ls:1,list_directory:1,mkdir:1};
+var _PRIMARY_ARG_CMD_TOOLS   = {shell:1,bash:1,run_command:1,execute:1,run_bash:1};
+var _PRIMARY_ARG_PAT_TOOLS   = {grep:1,search_in_files:1,search_files:1,glob:1,find_files:1};
+var _PRIMARY_ARG_QUERY_TOOLS = {web_search:1,memory_search:1};
+var _PRIMARY_ARG_URL_TOOLS   = {fetch_url:1,browser:1,browser_open:1};
+
 function _getPrimaryArg(toolName, argsJson){
   if(!argsJson) return null;
   var obj;
   try{ obj = JSON.parse(argsJson); }catch(_){ return null; }
   if(typeof obj !== 'object' || obj === null) return String(obj);
-  var _FILE_PATH_TOOLS = {read:1,read_file:1,write:1,write_file:1,edit:1,edit_file:1,patch_file:1,
-    append_file:1,delete_file:1,remove_file:1,move_file:1,rename_file:1,copy_file:1,
-    ls:1,list_directory:1,mkdir:1};
-  var _CMD_TOOLS = {shell:1,bash:1,run_command:1,execute:1,run_bash:1};
-  var _PATTERN_TOOLS = {grep:1,search_in_files:1,search_files:1,glob:1,find_files:1};
-  var _QUERY_TOOLS = {web_search:1,memory_search:1};
-  var _URL_TOOLS = {fetch_url:1,browser:1,browser_open:1};
-  if(_FILE_PATH_TOOLS[toolName]) return obj.path || obj.src || obj.source || null;
-  if(_CMD_TOOLS[toolName]) return obj.command || obj.cmd || null;
-  if(_PATTERN_TOOLS[toolName]) return obj.pattern || obj.query || obj.path || null;
-  if(_QUERY_TOOLS[toolName]) return obj.query || obj.text || null;
-  if(_URL_TOOLS[toolName]) return obj.url || null;
+  if(_PRIMARY_ARG_FILE_TOOLS[toolName])  return obj.path || obj.src || obj.source || null;
+  if(_PRIMARY_ARG_CMD_TOOLS[toolName])   return obj.command || obj.cmd || null;
+  if(_PRIMARY_ARG_PAT_TOOLS[toolName])   return obj.pattern || obj.query || obj.path || null;
+  if(_PRIMARY_ARG_QUERY_TOOLS[toolName]) return obj.query || obj.text || null;
+  if(_PRIMARY_ARG_URL_TOOLS[toolName])   return obj.url || null;
   if(toolName === 'git_commit') return obj.message || null;
   if(toolName === 'todo_add' || toolName === 'todo_update') return obj.description || obj.text || null;
   if(toolName === 'delegate_task' || toolName === 'spawn_agent') return obj.task || obj.description || null;
@@ -830,6 +831,13 @@ function _getPrimaryArg(toolName, argsJson){
   var keys = Object.keys(obj);
   if(keys.length > 0){ var v = obj[keys[0]]; if(typeof v === 'string' && v.length < 80) return v; }
   return null;
+}
+
+function _fmtPrimaryArg(toolName, argsJson){
+  var primary = _getPrimaryArg(toolName, argsJson);
+  if(primary) return primary.length > MAX_ARGS_DISPLAY_LENGTH ? primary.slice(0, MAX_ARGS_DISPLAY_LENGTH) + '…' : primary;
+  if(!argsJson) return '';
+  return argsJson.slice(0, MAX_ARGS_DISPLAY_LENGTH) + (argsJson.length > MAX_ARGS_DISPLAY_LENGTH ? '…' : '');
 }
 
 // ── Tool label map (tool function name → short human-readable description) ──
@@ -1206,7 +1214,14 @@ const Stream = (function(){
     });
   }
   function _ensureEl(){
-    if(!el){ el = Messages.add('agent',''); _cursor = document.createElement('span'); _cursor.className = 'cursor'; el.appendChild(_cursor); buf = _pendingBuf; _pendingBuf = ''; }
+    if(!el){
+      el = Messages.add('agent', '');
+      _cursor = document.createElement('span');
+      _cursor.className = 'cursor';
+      el.appendChild(_cursor);
+      buf = _pendingBuf;
+      _pendingBuf = '';
+    }
   }
   function start(){ buf = ''; _pendingBuf = ''; el = null; _cursor = null; _raf = false; }
   function flush(){ _raf = false; if(!el) return; el.innerHTML = MD.render(buf) || _esc(buf); el.appendChild(_cursor); Scroll.maybe(); }
@@ -1241,10 +1256,7 @@ const Tools = (function(){
     var label = _getToolLabel(name);
     var row = document.createElement('div');
     row.className = 'tool-row' + (label ? ' has-label' : ''); row.dataset.s = 'pending';
-    var primaryArg = _getPrimaryArg(name, args);
-    var pv = primaryArg
-      ? (primaryArg.length > MAX_ARGS_DISPLAY_LENGTH ? primaryArg.slice(0, MAX_ARGS_DISPLAY_LENGTH) + '…' : primaryArg)
-      : (args ? (args.slice(0,MAX_ARGS_DISPLAY_LENGTH) + (args.length > MAX_ARGS_DISPLAY_LENGTH ? '…' : '')) : '');
+    var pv = _fmtPrimaryArg(name, args);
     var nameHtml = label
       ? '<span class="tr-label">' + _esc(label) + '</span>'
       : '<span class="tr-name">' + _esc(name) + '</span>';
@@ -1304,10 +1316,7 @@ const Replay = (function(){
         var row = document.createElement('div');
         row.className = 'tool-row' + (label ? ' has-label' : '');
         row.dataset.s = t.ok === null ? 'pending' : (t.ok ? 'ok' : 'fail');
-        var primaryArg = _getPrimaryArg(t.name, t.args);
-        var pv = primaryArg
-          ? (primaryArg.length > MAX_ARGS_DISPLAY_LENGTH ? primaryArg.slice(0, MAX_ARGS_DISPLAY_LENGTH) + '…' : primaryArg)
-          : (t.args ? (t.args.slice(0,MAX_ARGS_DISPLAY_LENGTH) + (t.args.length > MAX_ARGS_DISPLAY_LENGTH ? '…' : '')) : '');
+        var pv = _fmtPrimaryArg(t.name, t.args);
         var nameHtml = label
           ? '<span class="tr-label">' + _esc(label) + '</span>'
           : '<span class="tr-name">' + _esc(t.name) + '</span>';
