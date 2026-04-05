@@ -604,7 +604,7 @@ header{
 .mfe-more{color:var(--teal);font-size:9px;cursor:pointer;font-style:normal;font-family:var(--mono)}
 
 /* Overlay */
-#overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,.35);z-index:15;backdrop-filter:blur(1px)}
+#overlay{display:none;position:fixed;inset:0;background:transparent;z-index:15;backdrop-filter:none}
 #overlay.show{display:block}
 
 /* Replay banner */
@@ -698,7 +698,7 @@ header{
   </div>
 </div>
 
-<div id="overlay" onclick="UI.closeAll()"></div>
+<div id="overlay"></div>
 
 <!-- Files panel -->
 <div class="panel" id="files-panel">
