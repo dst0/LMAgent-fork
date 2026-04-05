@@ -1347,8 +1347,8 @@ class SessionManager:
         data = _JsonStore(self._workspace / ".lmagent" / "state" / f"{sid}_task.json").load()
         if not data:
             return None
-        total = int(data.get("total_count", 0) or 0)
-        processed = int(data.get("processed_count", 0) or 0)
+        total = int(data.get("total_count", 0))
+        processed = int(data.get("processed_count", 0))
         return {
             "objective": data.get("objective", ""),
             "total_count": total,

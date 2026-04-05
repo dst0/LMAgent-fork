@@ -1994,7 +1994,6 @@ const Sessions = (function(){
       });
       if(_selectedId && !sessions.some(function(s){ return s.id === _selectedId; })){
         _selectedId = curId || null;
-        _selectedIsCurrent = !!_selectedId;
       }
       _selectedIsCurrent = !!_selectedId && _selectedId === curId;
       _updateSwitchBtn();
