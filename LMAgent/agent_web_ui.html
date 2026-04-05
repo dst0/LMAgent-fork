@@ -2229,7 +2229,7 @@ const SessionInspect = (function(){
     var todos = data.todos || [];
     var completed = data.completed || 0, total = data.total || 0;
     if(badge) badge.textContent = completed + '/' + total;
-    if(!todos.length){ body.innerHTML = '<div class="si-empty">No todos yet.</div>'; return; }
+    if(!todos.length){ body.innerHTML = '<div class="si-empty">No todos.</div>'; return; }
     // Progress bar
     var pct = total > 0 ? Math.round(completed / total * 100) : 0;
     var html = '<div class="si-progress"><div class="si-progress-bar"><div class="si-progress-fill" style="width:' + pct + '%"></div></div><span class="si-progress-label">' + completed + '/' + total + ' (' + pct + '%)</span></div>';
@@ -2255,7 +2255,7 @@ const SessionInspect = (function(){
     if(!body) return;
     if(data.error){ body.innerHTML = '<div class="si-empty">⚠ ' + _esc(data.error) + '</div>'; if(badge) badge.textContent = '!'; return; }
     var s = data.state;
-    if(!s){ body.innerHTML = '<div class="si-empty">No task state yet.</div>'; if(badge) badge.textContent = '—'; return; }
+    if(!s){ body.innerHTML = '<div class="si-empty">No task state.</div>'; if(badge) badge.textContent = '—'; return; }
     var pct = s.total_count > 0 ? Math.round(s.processed_count / s.total_count * 100) : 0;
     if(badge) badge.textContent = s.processed_count + '/' + s.total_count;
     var html = '';
