@@ -2787,6 +2787,10 @@ const SessionInspect = (function(){
         _followSession(connectSid, true);
       } else if(_followCurrent){
         _setSid(connectSid || null);
+        if(connectSid){
+          _ensureOpen();
+          _fetchAll(connectSid);
+        }
       }
       return;
     }
@@ -2830,6 +2834,8 @@ const SessionInspect = (function(){
 
   function init(){
     _startAutoRefresh();
+    _ensureOpen();
+    refresh(true);
   }
 
   return {refresh, loadSession, toggleSection, expandHist, init, onEvent};
