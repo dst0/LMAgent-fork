@@ -1496,6 +1496,28 @@ def status():
 @app.route("/sessions")
 @_require_auth
 def sessions():
+    def _build_micro_session(session_summary):
+        return {
+            "id": session_summary["id"],
+            "task": session_summary.get("task", ""),
+            "created": session_summary.get("created", ""),
+            "status": session_summary.get("status", "unknown"),
+            "iterations": session_summary.get("iterations", 0),
+            "parent": session_summary.get("parent"),
+            "todos": ({
+                "completed": session_summary["todos"].get("completed", 0),
+                "total": session_summary["todos"].get("total", 0),
+            } if session_summary.get("todos") else None),
+            "plan": ({
+                "completed": session_summary["plan"].get("completed", 0),
+                "total": session_summary["plan"].get("total", 0),
+            } if session_summary.get("plan") else None),
+            "task_state": ({
+                "processed_count": session_summary["task_state"].get("processed_count", 0),
+                "total_count": session_summary["task_state"].get("total_count", 0),
+            } if session_summary.get("task_state") else None),
+        }
+
     mgr  = SessionManager(WORKSPACE)
     sess = mgr.list_recent(20)
     with _session_lock:
@@ -1504,28 +1526,7 @@ def sessions():
     for s in sess:
         if s["status"] == "active" and not (agent_running and s["id"] == cur_sid):
             s["status"] = "idle"
-    micro_sessions = []
-    for s in sess:
-        micro_sessions.append({
-            "id": s["id"],
-            "task": s.get("task", ""),
-            "created": s.get("created", ""),
-            "status": s.get("status", "unknown"),
-            "iterations": s.get("iterations", 0),
-            "parent": s.get("parent"),
-            "todos": ({
-                "completed": s["todos"].get("completed", 0),
-                "total": s["todos"].get("total", 0),
-            } if s.get("todos") else None),
-            "plan": ({
-                "completed": s["plan"].get("completed", 0),
-                "total": s["plan"].get("total", 0),
-            } if s.get("plan") else None),
-            "task_state": ({
-                "processed_count": s["task_state"].get("processed_count", 0),
-                "total_count": s["task_state"].get("total_count", 0),
-            } if s.get("task_state") else None),
-        })
+    micro_sessions = [_build_micro_session(s) for s in sess]
     payload = {"sessions": micro_sessions, "current_session_id": cur_sid}
     version = request.args.get("version", "").strip()
     return jsonify(build_versioned_status_payload(payload, version))
