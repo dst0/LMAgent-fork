@@ -915,6 +915,31 @@ def _process_tool_calls(
 ) -> PermissionMode:
     todo_op_count = 0
     total_calls   = len(tool_calls)
+    task_op_called = False
+    work_progressed = False
+    non_bookkeeping_success = False
+
+    def _append_tool_message(name: str, tcid: str, payload: Dict[str, Any]) -> None:
+        messages.append({
+            "role": "tool",
+            "tool_call_id": tcid,
+            "name": name,
+            "content": json.dumps(payload),
+        })
+
+    def _run_auto_tool(name: str, auto_args: Dict[str, Any], tcid: str) -> Dict[str, Any]:
+        emit("tool_call", {"name": name, "args_preview": json.dumps(auto_args)[:80]})
+        auto_result = _execute_tool(
+            name, auto_args, workspace, available_tools, detector, iteration, mcp_manager, emit
+        )
+        emit("tool_result", {
+            "name": name,
+            "success": bool(auto_result.get("success")),
+            "summary": str(auto_result)[:200] if auto_result.get("success")
+            else auto_result.get("error", "")[:200],
+        })
+        _append_tool_message(name, tcid, auto_result)
+        return auto_result
 
     for tc in tool_calls:
         fn_name, args_raw, tc_id = _unpack_tc(tc, f"tc_{iteration}")
@@ -946,8 +971,14 @@ def _process_tool_calls(
 
         if fn_name.startswith("todo_"):
             todo_op_count += 1
+        if fn_name.startswith("task_state_"):
+            task_op_called = True
 
         if result.get("success"):
+            if fn_name in ("write", "edit", "mkdir", "shell", "powershell"):
+                work_progressed = True
+            if not fn_name.startswith("todo_") and not fn_name.startswith("task_state_"):
+                non_bookkeeping_success = True
             emit("tool_result", {"name": fn_name, "success": True,
                                   "summary": str(result)[:200]})
 
@@ -1006,10 +1037,53 @@ def _process_tool_calls(
             result = {"success": result.get("success", False),
                       "truncated": True, "data": result_str}
 
-        messages.append({
-            "role": "tool", "tool_call_id": tc_id, "name": fn_name,
-            "content": json.dumps(result),
-        })
+        _append_tool_message(fn_name, tc_id, result)
+
+    if non_bookkeeping_success and todo_op_count == 0:
+        todo_mgr = get_current_context().get("todo_manager")
+        if todo_mgr:
+            todos = todo_mgr.list_all().get("todos", [])
+            in_progress = any(t.get("status") == "in_progress" for t in todos)
+            pending = [t for t in todos if t.get("status") == "pending"]
+            if pending and not in_progress:
+                first = pending[0]
+                _run_auto_tool(
+                    "todo_update",
+                    {
+                        "todo_id": first.get("id"),
+                        "status": "in_progress",
+                        "notes": "Auto-started after successful work tool execution.",
+                    },
+                    f"tc_{iteration}_auto_todo_update",
+                )
+                emit("log", {"message": f"Auto-marked todo #{first.get('id')} as in_progress"})
+
+    if work_progressed and not task_op_called:
+        state_mgr = get_current_context().get("task_state_manager")
+        if state_mgr and not state_mgr.current_state:
+            state_mgr.load()
+        state = state_mgr.current_state if state_mgr else None
+        objective = state.objective if state and state.objective else next(
+            (
+                str(m.get("content", "")).strip()
+                for m in messages
+                if m.get("role") == "user" and str(m.get("content", "")).strip()
+            ),
+            "Complete the current task",
+        )
+        processed = int(state.processed_count) if state else 0
+        total = int(state.total_count) if state else 0
+        _run_auto_tool(
+            "task_state_update",
+            {
+                "objective": objective,
+                "total_count": total,
+                "processed_count": processed,
+                "next_action": "Continue execution with remaining required steps.",
+            },
+            f"tc_{iteration}_auto_task_state",
+        )
+        emit("log", {"message": "Auto-checkpointed task state after work progress"})
 
     if todo_op_count > 0 and todo_op_count == total_calls:
         todo_mgr = get_current_context().get("todo_manager")
