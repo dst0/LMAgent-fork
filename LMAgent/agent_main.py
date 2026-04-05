@@ -917,6 +917,7 @@ def run_agent(
                 _stall_count = 0
                 emit("complete", {"reason": reason, "answer": final_answer})
                 _save_session("idle")
+                task_state_mgr.clear()
                 if mode == "interactive":
                     print(colored(
                         "\n✅ Done. Ask a follow-up or give a new task.\n"

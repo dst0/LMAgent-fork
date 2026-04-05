@@ -928,6 +928,7 @@ class TodoManager:
         return self.update_status(todo_id, "completed")
 
     def start_next_pending(self, notes: str = "") -> Optional[TodoItem]:
+        """Start the next pending todo, or return None if one is already active or none remain."""
         if any(t.status == "in_progress" for t in self.todos):
             return None
         item = next((t for t in self.todos if t.status == "pending"), None)
@@ -937,6 +938,7 @@ class TodoManager:
         return item
 
     def advance_after_progress(self, notes: str = "") -> Dict[str, Any]:
+        """Complete the active/pending todo after work and start the next pending todo if available."""
         active = next((t for t in self.todos if t.status == "in_progress"), None)
         if not active:
             active = next((t for t in self.todos if t.status == "pending"), None)
@@ -947,6 +949,7 @@ class TodoManager:
         return {"success": True, "completed": active.id, "activated": nxt.id if nxt else None}
 
     def complete_remaining(self, notes: str = "") -> Dict[str, Any]:
+        """Complete every non-blocked todo and return how many items the runtime finalized."""
         updated = 0
         for item in self.todos:
             if item.status in ("completed", "blocked"):
@@ -1056,6 +1059,7 @@ class PlanManager:
     def complete_step(self, step_id: str) -> None: self._update_step(step_id, "completed")
 
     def complete_remaining(self) -> Dict[str, Any]:
+        """Mark every remaining plan step complete and report how many steps changed state."""
         if not self.plan:
             return {"success": False, "error": "No active plan"}
         updated = 0
@@ -1470,6 +1474,7 @@ class TaskStateManager:
     def sync(self, objective: str, total_count: int, processed_count: int,
              next_action: str, completion_gate: str = "",
              remaining_queue: Optional[List[str]] = None) -> TaskState:
+        """Create or refresh the persisted task checkpoint from code-managed runtime state."""
         state = self.current_state or TaskState(
             objective=objective,
             completion_gate=completion_gate or "processed == total",
@@ -1496,6 +1501,7 @@ class TaskStateManager:
         return state
 
     def mark_complete(self) -> Optional[TaskState]:
+        """Finalize the current checkpoint, or return None when no task state exists."""
         if not self.current_state:
             return None
         state = self.current_state

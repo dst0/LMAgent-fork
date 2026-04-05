@@ -4,6 +4,8 @@ from pathlib import Path
 import sys
 
 
+# test_payload_compat installs lightweight stubs in sys.modules; drop them here so
+# this file exercises the real runtime modules even when the suite runs in one process.
 for module_name in ("agent_core", "agent_tools"):
     sys.modules.pop(module_name, None)
 
