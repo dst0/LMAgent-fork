@@ -2148,7 +2148,7 @@ const Agent = (function(){
   function switchSession(id, events){
     var keepLiveState = state !== 'idle';
     sessionId = id; if(!keepLiveState) requestId = null; _hadContent = false; setSession(id);
-    suppressLiveRender = keepLiveState && (!!activeSessionId ? id !== activeSessionId : true);
+    suppressLiveRender = keepLiveState && (!activeSessionId || id !== activeSessionId);
     Tools.reset(); Stream.reset(); ImageUpload.clear();
     document.getElementById('messages').innerHTML = '<div id="replay-banner"></div><div id="empty"><div class="empty-glyph">λ_</div><p>Send a message to start working</p><div class="hint">/ commands &nbsp;·&nbsp; ↑↓ history &nbsp;·&nbsp; drag image</div></div>';
     if(!keepLiveState){
