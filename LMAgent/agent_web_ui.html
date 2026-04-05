@@ -1202,11 +1202,12 @@ const Status = (function(){
 })();
 
 const LiveActivity = (function(){
-  var ACTIVITY_IDLE_ALERT_MS = 12000;
+  var ACTIVITY_IDLE_ALERT_MS = 30000;
   var state = {
     title: 'Idle',
     detail: '',
     alert: '',
+    alertIteration: 0,
     icon: '◌',
     running: false,
     progress: {},
@@ -1246,6 +1247,7 @@ const LiveActivity = (function(){
     state.icon = '◌';
     state.progress = {};
     state.timing = {};
+    state.alertIteration = 0;
     _touch();
     _render();
   }
@@ -1258,6 +1260,7 @@ const LiveActivity = (function(){
     state.icon = '◌';
     state.progress = {};
     state.timing = {};
+    state.alertIteration = 0;
     _render();
   }
   function setActivity(data){
@@ -1277,7 +1280,13 @@ const LiveActivity = (function(){
     _render();
   }
   function setProgress(data){
-    state.progress = data || {};
+    data = data || {};
+    var nextIteration = Number(data.iteration) || 0;
+    if(state.alertIteration && nextIteration > state.alertIteration){
+      state.alert = '';
+      state.alertIteration = 0;
+    }
+    state.progress = data;
     _touch();
     _render();
   }
@@ -1290,6 +1299,7 @@ const LiveActivity = (function(){
     data = data || {};
     state.running = true;
     state.alert = data.message || '';
+    state.alertIteration = Number(data.iteration) || 0;
     state.icon = data.icon || '⚠';
     _touch();
     _render();
