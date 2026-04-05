@@ -1042,7 +1042,7 @@ function _makeThinkingBlock(text){
     var raw = body.textContent || '';
     var firstLine = raw.split('\n')[0];
     var first = firstLine.slice(0, _THINKING_PREVIEW_LEN);
-    var multi = firstLine.length > _THINKING_PREVIEW_LEN || raw.indexOf('\n') !== -1;
+    var multi = firstLine.length > _THINKING_PREVIEW_LEN || raw.includes('\n');
     var iter = el.dataset.iteration ? ' · iteration ' + el.dataset.iteration : '';
     var open = el.classList.contains('open');
     prev.textContent = open || !raw.trim() ? '💭 thinking…' + iter : '💭 ' + first + (multi ? '…' : '') + iter;
@@ -1462,7 +1462,11 @@ const ThinkingStream = (function(){
       if(iteration) block._setThinkingIteration(iteration);
       block = null;
     } else {
-      Messages.hideEmpty(); Messages.pane().appendChild(_makeThinkingBlock(fullText));
+      Messages.hideEmpty();
+      block = _makeThinkingBlock(fullText);
+      if(iteration) block._setThinkingIteration(iteration);
+      Messages.pane().appendChild(block);
+      block = null;
     }
     text = '';
     Scroll.maybe();
