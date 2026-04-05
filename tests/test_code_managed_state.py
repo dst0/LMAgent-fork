@@ -63,6 +63,26 @@ class CodeManagedStateTests(unittest.TestCase):
             self.assertEqual(task_mgr.current_state.remaining_queue, [])
             self.assertEqual(task_mgr.current_state.next_action, "Completed")
 
+    def test_plan_only_keeps_one_active_step(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp)
+            plan_mgr = PlanManager(workspace, "session")
+            plan_mgr.create({
+                "title": "Plan",
+                "steps": [
+                    {"id": "step-1", "description": "One", "status": "pending"},
+                    {"id": "step-2", "description": "Two", "status": "pending"},
+                ],
+            })
+
+            plan_mgr.start_step("step-1")
+            plan_mgr.start_step("step-2")
+
+            statuses = {step["id"]: step["status"] for step in plan_mgr.plan["steps"]}
+            self.assertEqual(statuses["step-1"], "pending")
+            self.assertEqual(statuses["step-2"], "in_progress")
+            self.assertEqual(plan_mgr.current_step_id, "step-2")
+
     def test_ai_tool_list_excludes_status_mutation_tools(self):
         names = {schema["function"]["name"] for schema in TOOL_SCHEMAS}
 

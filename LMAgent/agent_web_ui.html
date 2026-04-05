@@ -2051,80 +2051,85 @@ const Sessions = (function(){
       var d = await fetch(url).then(function(r){ return r.json(); });
       if(d && d.version) _version = String(d.version);
       if(d && d.changed === false) return;
-      var sessions = d.sessions || [];
-      var curId = d.current_session_id || Agent.getSession() || null;
-
-      if(!prevSelected && curId) prevSelected = curId;
-      _selectedId = prevSelected;
-
-      if(!sessions.length){
-        _selectedId = null; _selectedIsCurrent = false; _updateSwitchBtn();
-        list.innerHTML = '<div style="padding:11px;color:var(--text3);font-size:10.5px;font-style:italic">No sessions yet</div>';
-        return;
-      }
-
-      list.innerHTML = '';
-
-      sessions.forEach(function(s){
-        var item = document.createElement('div');
-
-        var isCurrent = (curId || Agent.getSession()) === s.id;
-        var isActive = s.status === 'active';
-
-        var cls = 'session-item';
-        if(isCurrent) cls += ' is-current';
-        if(isActive) cls += ' is-active';
-        item.className = cls;
-
-        item.title = s.task || '(no task)';
-
-        var statClass = isActive
-          ? 'active'
-          : s.status === 'completed'
-            ? 'completed'
-            : (s.status === 'error' || s.status === 'interrupted')
-              ? 'error'
-              : s.status === 'waiting'
-                ? 'waiting'
-                : 'idle';
-
-        var badges = '<span class="si-badge ' + statClass + '">' + _esc(s.status) + '</span>';
-        if(isCurrent) badges += '<span class="si-badge current">current</span>';
-
-        var iterStr = s.iterations
-          ? '<span class="si-iter">' + _esc(String(s.iterations)) + ' iter</span>'
-          : '';
-
-        item.innerHTML =
-          '<div class="si-id">' + _esc(s.id.slice(-12)) + '</div>' +
-          '<div class="si-task">' + _esc(s.task || '(no task)') + '</div>' +
-          '<div class="si-badges">' + badges + _summaryBadges(s) + iterStr + '</div>';
-
-        if(_selectedId === s.id){
-          item.classList.add('is-selected');
-          _selectedIsCurrent = isCurrent;
-        }
-
-        item.onclick = function(){
-          // Select this session (highlight) without switching
-          list.querySelectorAll('.session-item').forEach(function(el){ el.classList.remove('is-selected'); });
-          item.classList.add('is-selected');
-          _selectedId = s.id;
-          _selectedIsCurrent = (curId === s.id);
-          SessionInspect.loadSession(s.id, false);
-          _updateSwitchBtn();
-        };
-
-        list.appendChild(item);
-      });
-      if(_selectedId && !sessions.some(function(s){ return s.id === _selectedId; })){
-        _selectedId = curId || null;
-      }
-      _selectedIsCurrent = !!_selectedId && _selectedId === curId;
-      _updateSwitchBtn();
+      _renderPayload(d, prevSelected);
     }catch(e){
       list.innerHTML = '<div style="padding:11px;color:var(--red);font-size:10.5px">⚠ ' + _esc(String(e.message || e)) + '</div>';
     }
+  }
+
+  function _renderPayload(d, prevSelected){
+    var list = document.getElementById('sessions-list');
+    if(!list) return;
+    var sessions = (d && d.sessions) || [];
+    var curId = (d && d.current_session_id) || Agent.getSession() || null;
+
+    if(!prevSelected && curId) prevSelected = curId;
+    _selectedId = prevSelected;
+
+    if(!sessions.length){
+      _selectedId = null; _selectedIsCurrent = false; _updateSwitchBtn();
+      list.innerHTML = '<div style="padding:11px;color:var(--text3);font-size:10.5px;font-style:italic">No sessions yet</div>';
+      return;
+    }
+
+    list.innerHTML = '';
+
+    sessions.forEach(function(s){
+      var item = document.createElement('div');
+
+      var isCurrent = (curId || Agent.getSession()) === s.id;
+      var isActive = s.status === 'active';
+
+      var cls = 'session-item';
+      if(isCurrent) cls += ' is-current';
+      if(isActive) cls += ' is-active';
+      item.className = cls;
+
+      item.title = s.task || '(no task)';
+
+      var statClass = isActive
+        ? 'active'
+        : s.status === 'completed'
+          ? 'completed'
+          : (s.status === 'error' || s.status === 'interrupted')
+            ? 'error'
+            : s.status === 'waiting'
+              ? 'waiting'
+              : 'idle';
+
+      var badges = '<span class="si-badge ' + statClass + '">' + _esc(s.status) + '</span>';
+      if(isCurrent) badges += '<span class="si-badge current">current</span>';
+
+      var iterStr = s.iterations
+        ? '<span class="si-iter">' + _esc(String(s.iterations)) + ' iter</span>'
+        : '';
+
+      item.innerHTML =
+        '<div class="si-id">' + _esc(s.id.slice(-12)) + '</div>' +
+        '<div class="si-task">' + _esc(s.task || '(no task)') + '</div>' +
+        '<div class="si-badges">' + badges + _summaryBadges(s) + iterStr + '</div>';
+
+      if(_selectedId === s.id){
+        item.classList.add('is-selected');
+        _selectedIsCurrent = isCurrent;
+      }
+
+      item.onclick = function(){
+        list.querySelectorAll('.session-item').forEach(function(el){ el.classList.remove('is-selected'); });
+        item.classList.add('is-selected');
+        _selectedId = s.id;
+        _selectedIsCurrent = (curId === s.id);
+        SessionInspect.loadSession(s.id, false);
+        _updateSwitchBtn();
+      };
+
+      list.appendChild(item);
+    });
+    if(_selectedId && !sessions.some(function(s){ return s.id === _selectedId; })){
+      _selectedId = curId || null;
+    }
+    _selectedIsCurrent = !!_selectedId && _selectedId === curId;
+    _updateSwitchBtn();
   }
 
   async function switchSelected(){
@@ -2159,6 +2164,11 @@ const Sessions = (function(){
   }
 
   function onEvent(evt){
+    if(evt.type === 'sessions'){
+      var pushPanel = document.getElementById('sessions-panel');
+      if(pushPanel && pushPanel.classList.contains('open')) _renderPayload(evt.data || {}, _selectedId);
+      return;
+    }
     if(evt.type === 'connect' || evt.type === 'session' || evt.type === 'done' || evt.type === 'error'){
       var panel = document.getElementById('sessions-panel');
       if(panel && panel.classList.contains('open')) load();
@@ -2206,7 +2216,7 @@ const SessionInspect = (function(){
     var todos = data.todos || [];
     var completed = data.completed || 0, total = data.total || 0;
     if(badge) badge.textContent = completed + '/' + total;
-    if(!todos.length){ body.innerHTML = '<div class="si-empty">No todos</div>'; return; }
+    if(!todos.length){ body.innerHTML = '<div class="si-empty">No todos yet — this is separate from the plan and only appears after checklist items are created.</div>'; return; }
     // Progress bar
     var pct = total > 0 ? Math.round(completed / total * 100) : 0;
     var html = '<div class="si-progress"><div class="si-progress-bar"><div class="si-progress-fill" style="width:' + pct + '%"></div></div><span class="si-progress-label">' + completed + '/' + total + ' (' + pct + '%)</span></div>';
@@ -2231,7 +2241,7 @@ const SessionInspect = (function(){
     if(!body) return;
     if(data.error){ body.innerHTML = '<div class="si-empty">⚠ ' + _esc(data.error) + '</div>'; if(badge) badge.textContent = '!'; return; }
     var s = data.state;
-    if(!s){ body.innerHTML = '<div class="si-empty">No task state</div>'; if(badge) badge.textContent = '—'; return; }
+    if(!s){ body.innerHTML = '<div class="si-empty">No task state yet — this is separate from the plan and only appears for queue-style tracked work.</div>'; if(badge) badge.textContent = '—'; return; }
     var pct = s.total_count > 0 ? Math.round(s.processed_count / s.total_count * 100) : 0;
     if(badge) badge.textContent = s.processed_count + '/' + s.total_count;
     var html = '';
@@ -2376,14 +2386,10 @@ const SessionInspect = (function(){
           if(snapshot && snapshot.changed === false){
             _hasSnapshot = true;
             _setRefreshStatus('');
+            _lastRefresh = Date.now();
             continue;
           }
-          _renderTodos(snapshot.todos || {});
-          _renderTasks(snapshot.tasks || {});
-          _renderPlan(snapshot.plan || {});
-          _renderHistory(snapshot.history || {});
-          _hasSnapshot = true;
-          _setRefreshStatus('');
+          _applySnapshot(snapshot || {});
         }catch(e){
           var msg = String(e && (e.message || e) || 'refresh failed');
           if(_hasSnapshot){
@@ -2413,6 +2419,16 @@ const SessionInspect = (function(){
 
   var _lastRefresh = 0;
 
+  function _applySnapshot(snapshot){
+    _renderTodos(snapshot.todos || {});
+    _renderTasks(snapshot.tasks || {});
+    _renderPlan(snapshot.plan || {});
+    _renderHistory(snapshot.history || {});
+    _hasSnapshot = true;
+    _setRefreshStatus('');
+    _lastRefresh = Date.now();
+  }
+
   function refresh(){
     _lastRefresh = Date.now();
     var sid = _followCurrent ? Agent.getSession() : (_sid || Agent.getSession());
@@ -2435,25 +2451,24 @@ const SessionInspect = (function(){
     if(!panelOpen) return;
 
     if(evt.type === 'plan'){
-      // Plan created/updated — render immediately from event data, then re-fetch for full state
       _renderPlan({plan: typeof evt.data === 'object' ? evt.data : null});
-      setTimeout(function(){ _fetchAll(sid); }, 300);
+      _lastRefresh = Date.now();
+    } else if(evt.type === 'session_inspect'){
+      var pushedSid = evt.data && evt.data.session_id;
+      if(_followCurrent) sid = Agent.getSession();
+      if(pushedSid && sid && pushedSid === sid && evt.data.snapshot){
+        _applySnapshot(evt.data.snapshot);
+      }
     } else if(evt.type === 'tool'){
       var toolEvt = _toolEventInfo(evt.data);
       if(toolEvt.phase === 'result'){
-        // Any tool result may affect todos, tasks or plan — refresh all three
         _lastRefresh = Date.now();
-        setTimeout(function(){ _fetchAll(sid); }, 250);
       }
     } else if(evt.type === 'iteration'){
-      // Each iteration boundary — refresh everything so all sections stay current
       _lastRefresh = Date.now();
-      _fetchAll(sid);
     } else if(evt.type === 'done' || evt.type === 'complete'){
-      // Final state — refresh everything including history
-      setTimeout(function(){ _lastRefresh = Date.now(); _fetchAll(sid); }, 400);
+      _lastRefresh = Date.now();
     } else if(evt.type === 'session'){
-      // Session changed while panel is open — switch to new session
       var newSid = evt.data;
       if(_followCurrent && newSid && newSid !== _sid){ _setSid(newSid); _fetchAll(newSid); }
     }
@@ -2461,11 +2476,10 @@ const SessionInspect = (function(){
 
   function _startAutoRefresh(){
     if(_autoTimer) clearInterval(_autoTimer);
-    // Tick every second; decide whether to fetch based on running state + elapsed time
     _autoTimer = setInterval(function(){
       var panel = document.getElementById('session-inspect-panel');
       if(!panel || !panel.classList.contains('open')) return;
-      var interval = Agent.running() ? 2000 : 6000;
+      var interval = Agent.running() ? 15000 : 30000;
       if((Date.now() - _lastRefresh) >= interval) refresh();
     }, 1000);
   }

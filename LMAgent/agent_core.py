@@ -1043,6 +1043,10 @@ class PlanManager:
         if not self.plan: return
         for step in self.plan["steps"]:
             if step["id"] != step_id: continue
+            if status == "in_progress":
+                for other in self.plan["steps"]:
+                    if other["id"] != step_id and other.get("status") == "in_progress":
+                        other["status"] = "pending"
             step["status"] = status
             if status == "in_progress":
                 self.current_step_id = step_id

@@ -383,6 +383,8 @@ _MAX_TOOL_OUTCOME_LENGTH = 200
 
 _stream_queues:      list           = []
 _stream_queues_lock: threading.Lock = threading.Lock()
+_status_push_timer:  Optional[threading.Timer] = None
+_status_push_lock:   threading.Lock = threading.Lock()
 
 
 def _broadcast(item: tuple) -> None:
@@ -403,6 +405,88 @@ def _broadcast(item: tuple) -> None:
             q.put_nowait(item)
         except Exception:
             pass
+
+
+def _build_micro_session(session_summary):
+    return {
+        "id": session_summary["id"],
+        "task": session_summary.get("task", ""),
+        "created": session_summary.get("created", ""),
+        "status": session_summary.get("status", "unknown"),
+        "iterations": session_summary.get("iterations", 0),
+        "parent": session_summary.get("parent"),
+        "todos": ({
+            "completed": session_summary["todos"].get("completed", 0),
+            "total": session_summary["todos"].get("total", 0),
+        } if session_summary.get("todos") else None),
+        "plan": ({
+            "completed": session_summary["plan"].get("completed", 0),
+            "total": session_summary["plan"].get("total", 0),
+        } if session_summary.get("plan") else None),
+        "task_state": ({
+            "processed_count": session_summary["task_state"].get("processed_count", 0),
+            "total_count": session_summary["task_state"].get("total_count", 0),
+        } if session_summary.get("task_state") else None),
+    }
+
+
+def _build_sessions_payload() -> Dict[str, Any]:
+    mgr = SessionManager(WORKSPACE)
+    sess = mgr.list_recent(20)
+    with _session_lock:
+        cur_sid = _current_session_id
+    agent_running = _get_agent_state() == "running"
+    for s in sess:
+        if s["status"] == "active" and not (agent_running and s["id"] == cur_sid):
+            s["status"] = "idle"
+    return {
+        "sessions": [_build_micro_session(s) for s in sess],
+        "current_session_id": cur_sid,
+    }
+
+
+def _build_session_inspect_push_payload(sid: Optional[str]) -> Optional[Dict[str, Any]]:
+    if not sid:
+        return None
+    try:
+        snapshot = load_session_inspect_payload(
+            WORKSPACE,
+            sid,
+            todo_manager_cls=TodoManager,
+            task_state_manager_cls=TaskStateManager,
+            plan_manager_cls=PlanManager,
+            session_manager_cls=SessionManager,
+            strip_thinking_func=strip_thinking,
+        )
+    except LookupError:
+        return None
+    except Exception as exc:
+        Log.error(f"[session_inspect push] {exc}")
+        return None
+    return {"session_id": sid, "snapshot": snapshot}
+
+
+def _emit_status_push() -> None:
+    global _status_push_timer
+    with _status_push_lock:
+        _status_push_timer = None
+    with _session_lock:
+        sid = _current_session_id
+    inspect_payload = _build_session_inspect_push_payload(sid)
+    if inspect_payload:
+        _broadcast(("session_inspect", inspect_payload))
+    _broadcast(("sessions", _build_sessions_payload()))
+
+
+def _schedule_status_push(delay: float = 0.2) -> None:
+    global _status_push_timer
+    with _status_push_lock:
+        if _status_push_timer is not None:
+            _status_push_timer.cancel()
+        timer = threading.Timer(delay, _emit_status_push)
+        timer.daemon = True
+        _status_push_timer = timer
+        timer.start()
 
 
 def _register_stream_q() -> queue.Queue:
@@ -997,28 +1081,34 @@ def _push_event(event, stop_event, last_status: list, flush_thinking=None) -> No
             "success": bool(edata.get("success")),
             "outcome": _tool_outcome_text(edata)[:_MAX_TOOL_OUTCOME_LENGTH],
         }))
+        _schedule_status_push()
 
     elif etype == "iteration":
         if flush_thinking:
             flush_thinking()
         _broadcast(("iteration", f"{edata.get('n')}/{edata.get('max')}"))
+        _schedule_status_push()
 
     elif etype in ("log", "warning", "error"):
         msg = edata.get("message") or edata.get("error") or ""
         if msg and (etype == "error" or (not _is_noisy(msg) and msg != last_status[0])):
             last_status[0] = msg
             _broadcast(("status", msg[:120]))
+        _schedule_status_push()
 
     elif etype == "waiting":
         _broadcast(("status", f"waiting until {edata.get('resume_after')}"))
+        _schedule_status_push()
 
     elif etype == "plan":
         if flush_thinking:
             flush_thinking()
         _broadcast(("plan", edata.get("plan", {})))
+        _schedule_status_push()
 
     elif etype == "complete":
         _broadcast(("status", f"done — {edata.get('reason', '')}"))
+        _schedule_status_push()
 
 
 def _sse_response(generator):
@@ -1442,6 +1532,7 @@ def new_session():
     with _session_lock:
         _current_session_id = None
     _set_agent_state("idle")
+    _schedule_status_push(0)
     return jsonify({"ok": True})
 
 
@@ -1496,38 +1587,7 @@ def status():
 @app.route("/sessions")
 @_require_auth
 def sessions():
-    def _build_micro_session(session_summary):
-        return {
-            "id": session_summary["id"],
-            "task": session_summary.get("task", ""),
-            "created": session_summary.get("created", ""),
-            "status": session_summary.get("status", "unknown"),
-            "iterations": session_summary.get("iterations", 0),
-            "parent": session_summary.get("parent"),
-            "todos": ({
-                "completed": session_summary["todos"].get("completed", 0),
-                "total": session_summary["todos"].get("total", 0),
-            } if session_summary.get("todos") else None),
-            "plan": ({
-                "completed": session_summary["plan"].get("completed", 0),
-                "total": session_summary["plan"].get("total", 0),
-            } if session_summary.get("plan") else None),
-            "task_state": ({
-                "processed_count": session_summary["task_state"].get("processed_count", 0),
-                "total_count": session_summary["task_state"].get("total_count", 0),
-            } if session_summary.get("task_state") else None),
-        }
-
-    mgr  = SessionManager(WORKSPACE)
-    sess = mgr.list_recent(20)
-    with _session_lock:
-        cur_sid = _current_session_id
-    agent_running = _get_agent_state() == "running"
-    for s in sess:
-        if s["status"] == "active" and not (agent_running and s["id"] == cur_sid):
-            s["status"] = "idle"
-    micro_sessions = [_build_micro_session(s) for s in sess]
-    payload = {"sessions": micro_sessions, "current_session_id": cur_sid}
+    payload = _build_sessions_payload()
     version = request.args.get("version", "").strip()
     return jsonify(build_versioned_status_payload(payload, version))
 
@@ -1548,6 +1608,7 @@ def session_switch():
         return jsonify({"error": "session not found"}), 404
     with _session_lock:
         _current_session_id = sid
+    _schedule_status_push(0)
     events = _chatlog_get(sid)
     return jsonify({"ok": True, "events": [[k, v] for k, v in events]})
 
