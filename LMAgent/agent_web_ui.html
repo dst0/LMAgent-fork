@@ -165,6 +165,12 @@ header{
 .msg.sys.warn .msg-body{border-left-color:var(--amber);color:#a08040}
 .msg.sys.info .msg-body{border-left-color:var(--purple);color:var(--text2);font-style:normal;font-size:11.5px}
 .msg.sys.platform .msg-body{border-left-color:var(--teal-dim);color:var(--teal);font-style:normal}
+.msg.sys.sys-collapsible .msg-body{margin-top:5px}
+.msg.sys.sys-collapsible.sys-collapsed .msg-body{display:none}
+.msg-sys-hdr{display:flex;align-items:center;gap:5px;cursor:pointer;user-select:none}
+.msg-sys-arrow{font-size:8px;color:var(--text3);transition:transform .15s;flex-shrink:0;display:inline-block}
+.msg.sys.sys-collapsible:not(.sys-collapsed) .msg-sys-arrow{transform:rotate(90deg)}
+.msg-sys-preview{font-size:11px;color:var(--text2);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 
 /* Plan card */
 .plan-card{
@@ -865,6 +871,7 @@ const _TOKEN = '__AGENT_TOKEN__';
 // ─────────────────────────────────────────────────────────────────────────────
 var MAX_ARGS_DISPLAY_LENGTH = 50;
 var MAX_OUTCOME_DISPLAY_LENGTH = 120;
+const _SYSMSG_PREVIEW_LEN = 200;
 function _esc(s){ return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;'); }
 
 // Extract the primary human-readable argument from a tool's JSON args string.
@@ -1132,6 +1139,32 @@ function _makeStepCollapsible(wrap, raw){
     var c = wrap.classList.toggle('step-collapsed');
     arrow.textContent = c ? '▶' : '▾';
   };
+}
+
+function _makeSystemMessageCollapsible(wrap, raw){
+  if(!wrap) return;
+  var text = String(raw || '');
+  var trimmed = text.trim();
+  if(!trimmed) return;
+  var lines = trimmed.split('\n');
+  var firstLine = '';
+  for(var i = 0; i < lines.length; i++){
+    var line = lines[i].trim();
+    if(line){ firstLine = line; break; }
+  }
+  if(!firstLine) return;
+  var multi = trimmed.includes('\n');
+  if(!multi && firstLine.length <= _SYSMSG_PREVIEW_LEN) return;
+  var body = wrap.querySelector('.msg-body');
+  if(!body || wrap.querySelector('.msg-sys-hdr')) return;
+  var preview = firstLine.slice(0, _SYSMSG_PREVIEW_LEN) + (firstLine.length > _SYSMSG_PREVIEW_LEN || multi ? '…' : '');
+  var hdr = document.createElement('div'); hdr.className = 'msg-sys-hdr'; hdr.title = 'Click to collapse/expand';
+  var arrow = document.createElement('span'); arrow.className = 'msg-sys-arrow'; arrow.textContent = '▶';
+  var label = document.createElement('span'); label.className = 'msg-sys-preview'; label.textContent = preview;
+  hdr.appendChild(arrow); hdr.appendChild(label);
+  wrap.classList.add('sys-collapsible', 'sys-collapsed');
+  wrap.insertBefore(hdr, body);
+  hdr.onclick = function(){ wrap.classList.toggle('sys-collapsed'); };
 }
 
 // Make a tool row clickable to reveal its full arguments.
@@ -1470,7 +1503,11 @@ const Messages = (function(){
     if(html){ if(asHtml) body.innerHTML = html; else body.textContent = html; }
     Scroll.maybe(); return body;
   }
-  function sys(text, variant){ add('sys', text, variant || ''); }
+  function sys(text, variant){
+    var body = add('sys', text, variant || '');
+    _makeSystemMessageCollapsible(body && body.closest('.msg'), text);
+    return body;
+  }
   return {add, sys, pane, hideEmpty, showProgress};
 })();
 
@@ -1679,7 +1716,7 @@ const Replay = (function(){
         });
         _finaliseToolGroup(g, toolItems.length); pane.appendChild(g); toolItems = [];
       }
-    function sysMsg(text, v){ var d = document.createElement('div'); d.className = 'msg sys ' + (v||''); d.innerHTML = '<div class="msg-label"></div><div class="msg-body"></div>'; d.querySelector('.msg-body').textContent = text; pane.appendChild(d); }
+    function sysMsg(text, v){ Messages.sys(text, v); }
     function userMsg(text){
       hideEmpty();
       var wrap = document.createElement('div');
