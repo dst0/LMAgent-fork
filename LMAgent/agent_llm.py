@@ -52,6 +52,8 @@ _SUB_AGENT_TOOL_NAMES = frozenset({"write", "read", "edit", "ls", "glob", "grep"
 _PLAN_TOOL_NAMES = frozenset({"ls", "read", "glob", "grep", "git_status"})
 _NO_USER_QUERY_ERR = "no user query found in messages"
 _ACTIVE_USER_REQUEST_TAG = "[ACTIVE USER REQUEST]"
+_TASK_STATE_MARKER = "[TASK STATE - DO NOT SUMMARIZE]"
+_TASK_STATE_OBJECTIVE_PREFIX = "OBJECTIVE:"
 _AGENT_USER_NUDGE_PREFIXES = (
     "⚠️ HARD STOP:",
     "⚠️ LOOP DETECTED:",
@@ -334,10 +336,10 @@ def _extract_task_state_objective(messages: List[Dict[str, Any]]) -> str:
         if msg.get("role") != "system":
             continue
         content = str(msg.get("content", ""))
-        if "[TASK STATE - DO NOT SUMMARIZE]" not in content:
+        if _TASK_STATE_MARKER not in content:
             continue
         for line in content.splitlines():
-            if line.startswith("OBJECTIVE:"):
+            if line.startswith(_TASK_STATE_OBJECTIVE_PREFIX):
                 return line.partition(":")[2].strip()
     return ""
 

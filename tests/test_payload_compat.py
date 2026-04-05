@@ -94,6 +94,8 @@ class PayloadCompatTests(unittest.TestCase):
         self.assertEqual(payload["messages"][2]["role"], "user")
         self.assertIn("Implement export endpoint", payload["messages"][2]["content"])
         self.assertNotIn("HARD STOP", payload["messages"][2]["content"])
+        self.assertEqual(payload["messages"][-2], messages[-2])
+        self.assertEqual(payload["messages"][-1], messages[-1])
 
 
 if __name__ == "__main__":
