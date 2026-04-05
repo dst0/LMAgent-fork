@@ -1464,7 +1464,33 @@ def status():
 def sessions():
     mgr  = SessionManager(WORKSPACE)
     sess = mgr.list_recent(20)
-    return jsonify({"sessions": sess})
+    with _session_lock:
+        cur_sid = _current_session_id
+    agent_running = _get_agent_state() == "running"
+    for s in sess:
+        if s["status"] == "active" and not (agent_running and s["id"] == cur_sid):
+            s["status"] = "idle"
+    return jsonify({"sessions": sess, "current_session_id": cur_sid})
+
+
+@app.route("/session/switch", methods=["POST"])
+@_require_auth
+def session_switch():
+    """Switch the current session (only when agent is idle)."""
+    global _current_session_id
+    data = request.get_json(silent=True) or {}
+    sid = data.get("session_id")
+    if not sid:
+        return jsonify({"error": "session_id required"}), 400
+    if _get_agent_state() != "idle":
+        return jsonify({"error": "agent is busy"}), 409
+    sm = SessionManager(WORKSPACE)
+    if not sm.load(sid):
+        return jsonify({"error": "session not found"}), 404
+    with _session_lock:
+        _current_session_id = sid
+    events = _chatlog_get(sid)
+    return jsonify({"ok": True, "events": [[k, v] for k, v in events]})
 
 
 @app.route("/upload", methods=["POST"])
