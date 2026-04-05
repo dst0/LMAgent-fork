@@ -319,6 +319,7 @@ _active_responses_lock: threading.Lock = threading.Lock()
 
 _session_lock            = threading.Lock()
 _current_session_id      = None
+_active_session_id       = None
 _current_permission_mode = Config.PERMISSION_MODE
 
 _stop_events:      dict           = {}
@@ -407,6 +408,11 @@ def _broadcast(item: tuple) -> None:
             pass
 
 
+def _get_chatlog_session_id():
+    sid = getattr(_tl, "chatlog_session_id", _CHATLOG_USE_CURRENT)
+    return _current_session_id if sid is _CHATLOG_USE_CURRENT else sid
+
+
 def _build_micro_session(session_summary):
     return {
         "id": session_summary["id"],
@@ -435,9 +441,10 @@ def _build_sessions_payload() -> Dict[str, Any]:
     sess = mgr.list_recent(20)
     with _session_lock:
         cur_sid = _current_session_id
+        active_sid = _active_session_id
     agent_running = _get_agent_state() == "running"
     for s in sess:
-        if s["status"] == "active" and not (agent_running and s["id"] == cur_sid):
+        if s["status"] == "active" and not (agent_running and s["id"] == active_sid):
             s["status"] = "idle"
     return {
         "sessions": [_build_micro_session(s) for s in sess],
@@ -510,6 +517,7 @@ def _unregister_stream_q(q: queue.Queue) -> None:
 
 _chat_logs:     dict           = defaultdict(list)
 _chat_log_lock: threading.Lock = threading.Lock()
+_CHATLOG_USE_CURRENT = object()
 _NO_SESSION_KEY = "_none_"
 _REPLAY_KINDS   = frozenset({
     "user", "token", "thinking", "tool", "status",
@@ -525,12 +533,13 @@ def _clog_key(sid) -> str:
 def _chatlog_append(item: tuple) -> None:
     if item[0] not in _REPLAY_KINDS:
         return
-    key = _clog_key(_current_session_id)
+    sid = _get_chatlog_session_id()
+    key = _clog_key(sid)
     with _chat_log_lock:
         _chat_logs[key].append(item)
     # Persist to disk so history survives server restarts
-    if _current_session_id:
-        _eventlog_write(_current_session_id, item[0], item[1])
+    if sid:
+        _eventlog_write(sid, item[0], item[1])
 
 
 def _chatlog_get(sid) -> list:
@@ -1178,10 +1187,13 @@ def _sse_response(generator):
 def _execute_agent(message, session_id, request_id, stop_ev,
                    permission_mode, whisper_fn=None,
                    web_origin: bool = True, on_session=None):
-    global _current_session_id
+    global _active_session_id, _current_session_id
 
     _tl.stop_event  = stop_ev
     _tl.request_id  = request_id
+    _tl.chatlog_session_id = session_id
+    with _session_lock:
+        _active_session_id = session_id
 
     thinking_cb, flush_thinking = _make_thinking_helpers()
     _tl.thinking_cb = thinking_cb
@@ -1224,12 +1236,20 @@ def _execute_agent(message, session_id, request_id, stop_ev,
 
         # PATCH 3: Only update _current_session_id and broadcast the final
         # session event when the call originated from the web /chat endpoint.
+        should_broadcast_session = False
         with _session_lock:
+            _active_session_id = result.session_id
             if web_origin:
-                _current_session_id = result.session_id
+                # Keep the user's manually selected session if they switched away
+                # while this run was still streaming in the background.
+                if _current_session_id == session_id:  # user has not switched the viewed session mid-run
+                    _current_session_id = result.session_id
+                    should_broadcast_session = True
         if web_origin:
             _chatlog_merge_keys(session_id, result.session_id)
-            _broadcast(("session", result.session_id))
+            _tl.chatlog_session_id = result.session_id
+            if should_broadcast_session:
+                _broadcast(("session", result.session_id))
         # Always notify non-web callers of the final session ID
         if on_session and result.session_id:
             on_session(result.session_id)
@@ -1239,24 +1259,35 @@ def _execute_agent(message, session_id, request_id, stop_ev,
             _set_agent_state("waiting")
         elif result.status in ("error", "interrupted"):
             _broadcast(("error", result.final_answer or result.status))
+            with _session_lock:
+                _active_session_id = None
             _set_agent_state("idle")
         else:
             words  = (result.final_answer or "").split()
             reason = " ".join(words[:8]) + ("…" if len(words) > 8 else "")
             _broadcast(("done", reason or result.status))
+            with _session_lock:
+                _active_session_id = None
             _set_agent_state("idle")
 
     except _AgentStopped:
         flush_thinking()
         # Re-confirm the session ID so the next message picks it up cleanly
         if web_origin:
-            _broadcast(("session", session_id or ""))
+            with _session_lock:
+                should_broadcast_session = (_current_session_id == session_id)
+            if should_broadcast_session:
+                _broadcast(("session", session_id or ""))
         _broadcast(("done", "stopped"))
+        with _session_lock:
+            _active_session_id = None
         _set_agent_state("idle")
 
     except Exception as e:
         flush_thinking()
         _broadcast(("error", str(e)))
+        with _session_lock:
+            _active_session_id = None
         _set_agent_state("idle")
         Log.error(f"[agent] unhandled exception: {e}")
         traceback.print_exc()
@@ -1264,6 +1295,7 @@ def _execute_agent(message, session_id, request_id, stop_ev,
     finally:
         _tl.stop_event  = None
         _tl.request_id  = None
+        _tl.chatlog_session_id = _CHATLOG_USE_CURRENT
         _tl.thinking_cb = None
         _tl.token_cb    = None
         with _active_responses_lock:
@@ -1530,7 +1562,9 @@ def chat():
 
     with _session_lock:
         _current_session_id = session_id
+    _tl.chatlog_session_id = session_id
     _broadcast(("user", message))
+    _tl.chatlog_session_id = _CHATLOG_USE_CURRENT
 
     def _run():
         try:
@@ -1577,9 +1611,10 @@ def stop():
 @app.route("/new", methods=["POST"])
 @_require_auth
 def new_session():
-    global _current_session_id
+    global _active_session_id, _current_session_id
     with _session_lock:
         _current_session_id = None
+        _active_session_id = None
     _set_agent_state("idle")
     _schedule_status_push(0)
     return jsonify({"ok": True})
@@ -1644,14 +1679,12 @@ def sessions():
 @app.route("/session/switch", methods=["POST"])
 @_require_auth
 def session_switch():
-    """Switch the current session (only when agent is idle)."""
+    """Switch the currently viewed session."""
     global _current_session_id
     data = request.get_json(silent=True) or {}
     sid = data.get("session_id")
     if not sid:
         return jsonify({"error": "session_id required"}), 400
-    if _get_agent_state() != "idle":
-        return jsonify({"error": "agent is busy"}), 409
     sm = SessionManager(WORKSPACE)
     if not sm.load(sid):
         return jsonify({"error": "session not found"}), 404
