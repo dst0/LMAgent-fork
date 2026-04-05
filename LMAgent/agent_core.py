@@ -1264,6 +1264,7 @@ class AgentResult:
 
 class SessionManager:
     def __init__(self, workspace: Path):
+        self._workspace = workspace
         self._dir = workspace / ".lmagent" / "sessions"
         self._dir.mkdir(parents=True, exist_ok=True)
 
@@ -1285,16 +1286,100 @@ class SessionManager:
         data = self._store(sid).load()
         return (data["messages"], data["metadata"]) if data else None
 
+    def _todo_summary(self, sid: str) -> Optional[Dict[str, Any]]:
+        data = _JsonStore(self._workspace / ".lmagent" / "todos" / f"{sid}.json").load()
+        if not data:
+            return None
+        todos = data.get("todos", [])
+        total = len(todos)
+        completed = sum(1 for t in todos if t.get("status") == "completed")
+        in_progress = sum(1 for t in todos if t.get("status") == "in_progress")
+        blocked = sum(1 for t in todos if t.get("status") == "blocked")
+        pending = sum(1 for t in todos if t.get("status") == "pending")
+        if not total:
+            return None
+        if completed == total:
+            status = "completed"
+        elif blocked and not pending and not in_progress:
+            status = "blocked"
+        elif in_progress:
+            status = "active"
+        else:
+            status = "pending"
+        return {
+            "total": total,
+            "completed": completed,
+            "in_progress": in_progress,
+            "pending": pending,
+            "blocked": blocked,
+            "status": status,
+        }
+
+    def _plan_summary(self, sid: str) -> Optional[Dict[str, Any]]:
+        data = _JsonStore(self._workspace / ".lmagent" / "plans" / f"{sid}.json").load()
+        if not data:
+            return None
+        plan = data.get("plan") or {}
+        steps = plan.get("steps") or []
+        total = len(steps)
+        if not steps and not plan.get("title") and not data.get("current_step_id"):
+            return None
+        completed = sum(1 for s in steps if s.get("status") == "completed")
+        in_progress = sum(1 for s in steps if s.get("status") == "in_progress")
+        status = plan.get("status")
+        if not status:
+            if total and completed == total:
+                status = "completed"
+            elif in_progress:
+                status = "active"
+            else:
+                status = "pending"
+        return {
+            "title": plan.get("title", ""),
+            "total": total,
+            "completed": completed,
+            "in_progress": in_progress,
+            "current_step_id": data.get("current_step_id"),
+            "status": status,
+        }
+
+    def _task_summary(self, sid: str) -> Optional[Dict[str, Any]]:
+        data = _JsonStore(self._workspace / ".lmagent" / "state" / f"{sid}_task.json").load()
+        if not data:
+            return None
+        total = int(data.get("total_count", 0))
+        processed = int(data.get("processed_count", 0))
+        return {
+            "objective": data.get("objective", ""),
+            "total_count": total,
+            "processed_count": processed,
+            "remaining_count": len(data.get("remaining_queue") or []),
+            "next_action": data.get("next_action", ""),
+            "last_error": data.get("last_error", ""),
+            "status": ("completed" if total and processed >= total else
+                       "error" if data.get("last_error") else
+                       "active" if total or processed else "idle"),
+        }
+
+    def get_session_summary(self, sid: str) -> Dict[str, Any]:
+        return {
+            "todos": self._todo_summary(sid),
+            "plan": self._plan_summary(sid),
+            "task_state": self._task_summary(sid),
+        }
+
     def list_recent(self, limit: int = 10) -> List[Dict]:
         sessions = []
         for f in sorted(self._dir.glob("*.json"),
                         key=lambda p: p.stat().st_mtime, reverse=True)[:limit]:
             try:
                 m = json.loads(f.read_text(encoding="utf-8"))["metadata"]
+                sid = m["id"]
                 sessions.append({
-                    "id": m["id"], "task": m.get("task", "")[:50],
+                    "id": sid, "task": m.get("task", "")[:50],
                     "created": m.get("created", ""), "status": m.get("status", "unknown"),
                     "iterations": m.get("iterations", 0), "parent": m.get("parent_session"),
+                    **self.get_session_summary(sid),
                 })
             except Exception:
                 continue

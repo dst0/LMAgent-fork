@@ -726,6 +726,9 @@ def run_agent(
             "permission_mode": current_permission_mode.value,
         })
 
+    if Config.AUTO_SAVE_SESSION:
+        _save_session("active")
+
     def _inject_context() -> None:
         nonlocal messages
         if Config.ENABLE_PLAN_ENFORCEMENT and plan_mgr.plan:
@@ -917,7 +920,6 @@ def run_agent(
                 _stall_count = 0
                 emit("complete", {"reason": reason, "answer": final_answer})
                 _save_session("idle")
-                task_state_mgr.clear()
                 if mode == "interactive":
                     print(colored(
                         "\n✅ Done. Ask a follow-up or give a new task.\n"

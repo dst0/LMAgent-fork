@@ -1325,10 +1325,19 @@ const Replay = (function(){
       _finaliseToolGroup(g, toolItems.length); pane.appendChild(g); toolItems = [];
     }
     function sysMsg(text, v){ var d = document.createElement('div'); d.className = 'msg sys ' + (v||''); d.innerHTML = '<div class="msg-label"></div><div class="msg-body"></div>'; d.querySelector('.msg-body').textContent = text; pane.appendChild(d); }
+    function userMsg(text){
+      hideEmpty();
+      var wrap = document.createElement('div');
+      wrap.className = 'msg user';
+      wrap.innerHTML = '<div class="msg-label">You</div><div class="msg-body"></div>';
+      wrap.querySelector('.msg-body').textContent = text || '';
+      pane.appendChild(wrap);
+    }
     var lastTok = false;
     events.forEach(function(item){
       var kind = item[0], payload = item[1];
-      if(kind === 'token'){ if(!lastTok) flushTools(); tokBuf += payload; lastTok = true; }
+      if(kind === 'user'){ flushTok(); flushTools(); lastTok = false; userMsg(payload); }
+      else if(kind === 'token'){ if(!lastTok) flushTools(); tokBuf += payload; lastTok = true; }
       else if(kind === 'thinking'){ flushTok(); flushTools(); lastTok = false; hideEmpty(); pane.appendChild(_makeThinkingBlock(payload)); }
       else if(kind === 'tool'){
         if(lastTok) flushTok(); lastTok = false;
@@ -1513,6 +1522,7 @@ const Agent = (function(){
   }
 
   function handleEvent(evt){
+    Sessions.onEvent(evt);
     // Always forward to SessionInspect for real-time status updates
     SessionInspect.onEvent(evt);
 
@@ -1717,7 +1727,7 @@ const Agent = (function(){
     document.getElementById('messages').innerHTML = '<div id="replay-banner"></div><div id="empty"><div class="empty-glyph">λ_</div><p>Send a message to start working</p><div class="hint">/ commands &nbsp;·&nbsp; ↑↓ history &nbsp;·&nbsp; drag image</div></div>';
     Status.set('ready',''); Status.iter('');
     if(events && events.length) Replay.run(events);
-    SessionInspect.loadSession(id);
+    SessionInspect.loadSession(id, true);
     document.getElementById('msg-input').focus();
   }
 
@@ -1877,6 +1887,20 @@ const Sessions = (function(){
   var _selectedId = null;
   var _selectedIsCurrent = false;
 
+  function _summaryBadges(s){
+    var out = [];
+    if(s.todos && s.todos.total){
+      out.push('<span class="si-badge idle">todo ' + _esc(String(s.todos.completed || 0)) + '/' + _esc(String(s.todos.total || 0)) + '</span>');
+    }
+    if(s.plan && s.plan.total){
+      out.push('<span class="si-badge idle">plan ' + _esc(String(s.plan.completed || 0)) + '/' + _esc(String(s.plan.total || 0)) + '</span>');
+    }
+    if(s.task_state && (s.task_state.total_count || s.task_state.processed_count)){
+      out.push('<span class="si-badge idle">task ' + _esc(String(s.task_state.processed_count || 0)) + '/' + _esc(String(s.task_state.total_count || 0)) + '</span>');
+    }
+    return out.join('');
+  }
+
   function _updateSwitchBtn(){
     var btn = document.getElementById('sessions-switch-btn');
     if(!btn) return;
@@ -1895,8 +1919,7 @@ const Sessions = (function(){
   async function load(){
     var list = document.getElementById('sessions-list');
     if(!list) return;
-
-    _selectedId = null; _selectedIsCurrent = false;
+    var prevSelected = _selectedId;
     _updateSwitchBtn();
 
     list.innerHTML = '<div style="padding:11px;color:var(--text3);font-size:10.5px">Loading…</div>';
@@ -1904,9 +1927,13 @@ const Sessions = (function(){
     try{
       var d = await fetch('/sessions').then(function(r){ return r.json(); });
       var sessions = d.sessions || [];
-      var curId = d.current_session_id || null;
+      var curId = d.current_session_id || Agent.getSession() || null;
+
+      if(!prevSelected && curId) prevSelected = curId;
+      _selectedId = prevSelected;
 
       if(!sessions.length){
+        _selectedId = null; _selectedIsCurrent = false; _updateSwitchBtn();
         list.innerHTML = '<div style="padding:11px;color:var(--text3);font-size:10.5px;font-style:italic">No sessions yet</div>';
         return;
       }
@@ -1946,19 +1973,30 @@ const Sessions = (function(){
         item.innerHTML =
           '<div class="si-id">' + _esc(s.id.slice(-12)) + '</div>' +
           '<div class="si-task">' + _esc(s.task || '(no task)') + '</div>' +
-          '<div class="si-badges">' + badges + iterStr + '</div>';
+          '<div class="si-badges">' + badges + _summaryBadges(s) + iterStr + '</div>';
+
+        if(_selectedId === s.id){
+          item.classList.add('is-selected');
+          _selectedIsCurrent = isCurrent;
+        }
 
         item.onclick = function(){
           // Select this session (highlight) without switching
           list.querySelectorAll('.session-item').forEach(function(el){ el.classList.remove('is-selected'); });
           item.classList.add('is-selected');
           _selectedId = s.id;
-          _selectedIsCurrent = isCurrent;
+          _selectedIsCurrent = (curId === s.id);
+          SessionInspect.loadSession(s.id, false);
           _updateSwitchBtn();
         };
 
         list.appendChild(item);
       });
+      if(_selectedId && !sessions.some(function(s){ return s.id === _selectedId; })){
+        _selectedId = curId || null;
+      }
+      _selectedIsCurrent = !!_selectedId && _selectedId === curId;
+      _updateSwitchBtn();
     }catch(e){
       list.innerHTML = '<div style="padding:11px;color:var(--red);font-size:10.5px">⚠ ' + _esc(String(e.message || e)) + '</div>';
     }
@@ -1995,14 +2033,21 @@ const Sessions = (function(){
     }
   }
 
-  return {load, switchSelected};
+  function onEvent(evt){
+    if(evt.type === 'connect' || evt.type === 'session' || evt.type === 'done' || evt.type === 'error'){
+      var panel = document.getElementById('sessions-panel');
+      if(panel && panel.classList.contains('open')) load();
+    }
+  }
+
+  return {load, switchSelected, onEvent};
 })();
 
 // ─────────────────────────────────────────────────────────────────────────────
 // SESSION INSPECT
 // ─────────────────────────────────────────────────────────────────────────────
 const SessionInspect = (function(){
-  var _sid = null, _autoTimer = null;
+  var _sid = null, _autoTimer = null, _followCurrent = true;
 
   function _setSid(id){
     _sid = id;
@@ -2182,12 +2227,13 @@ const SessionInspect = (function(){
 
   function refresh(){
     _lastRefresh = Date.now();
-    var sid = _sid || Agent.getSession();
+    var sid = _followCurrent ? Agent.getSession() : (_sid || Agent.getSession());
     if(sid !== _sid) _setSid(sid);
     _fetchAll(sid);
   }
 
-  function loadSession(id){
+  function loadSession(id, followCurrent){
+    _followCurrent = !!followCurrent;
     _setSid(id);
     _fetchAll(id);
   }
@@ -2221,7 +2267,7 @@ const SessionInspect = (function(){
     } else if(evt.type === 'session'){
       // Session changed while panel is open — switch to new session
       var newSid = evt.data;
-      if(newSid && newSid !== _sid){ _setSid(newSid); _fetchAll(newSid); }
+      if(_followCurrent && newSid && newSid !== _sid){ _setSid(newSid); _fetchAll(newSid); }
     }
   }
 

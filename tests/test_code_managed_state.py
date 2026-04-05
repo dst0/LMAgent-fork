@@ -11,7 +11,7 @@ for module_name in ("agent_core", "agent_tools"):
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "LMAgent"))
 
-from agent_core import PlanManager, TaskStateManager, TodoManager
+from agent_core import PlanManager, SessionManager, TaskStateManager, TodoManager
 from agent_tools import TOOL_SCHEMAS
 
 
@@ -73,6 +73,47 @@ class CodeManagedStateTests(unittest.TestCase):
         self.assertIn("todo_add", names)
         self.assertIn("todo_list", names)
         self.assertIn("task_state_get", names)
+
+    def test_session_list_includes_persisted_plan_todo_and_task_summaries(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp)
+            session_mgr = SessionManager(workspace)
+            sid = session_mgr.create("Large batch rename")
+
+            todo_mgr = TodoManager(workspace, sid)
+            todo_mgr.add("Scan files")
+            todo_mgr.add("Rename files")
+            todo_mgr.start_next_pending("Started by test")
+
+            plan_mgr = PlanManager(workspace, sid)
+            plan_mgr.create({
+                "title": "Plan",
+                "steps": [
+                    {"id": "scan", "description": "Scan", "status": "completed"},
+                    {"id": "rename", "description": "Rename", "status": "in_progress"},
+                ],
+            })
+            plan_mgr.start_step("rename")
+
+            task_mgr = TaskStateManager(workspace, sid)
+            task_mgr.sync(
+                objective="Rename all files",
+                total_count=10,
+                processed_count=4,
+                next_action="Continue renaming",
+                remaining_queue=["f5.py", "f6.py"],
+            )
+
+            recent = session_mgr.list_recent(1)
+            self.assertEqual(len(recent), 1)
+            summary = recent[0]
+
+            self.assertEqual(summary["todos"]["total"], 2)
+            self.assertEqual(summary["todos"]["completed"], 0)
+            self.assertEqual(summary["plan"]["completed"], 1)
+            self.assertEqual(summary["plan"]["total"], 2)
+            self.assertEqual(summary["task_state"]["processed_count"], 4)
+            self.assertEqual(summary["task_state"]["total_count"], 10)
 
 
 if __name__ == "__main__":
