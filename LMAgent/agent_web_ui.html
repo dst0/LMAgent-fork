@@ -1946,18 +1946,18 @@ const Agent = (function(){
 
     switch(evt.type){
       case 'token':
-        if(suppressLiveRender) break;
+        if (suppressLiveRender) break;
         Tools.endGroup(); if(!Stream.active()) Stream.start(); Stream.token(evt.data); _hadContent = true;
         LiveActivity.setActivity({kind:'token', message:'Streaming answer', icon:'✎'});
         break;
       case 'thinking_live':
-        if(suppressLiveRender) break;
+        if (suppressLiveRender) break;
         if(evt.data && evt.data.phase === 'start') ThinkingStream.start();
         else if(evt.data && evt.data.phase === 'delta') ThinkingStream.delta(evt.data.text || '');
         _hadContent = true;
         break;
       case 'thinking':
-        if(suppressLiveRender) break;
+        if (suppressLiveRender) break;
         Stream.finalize(); Tools.endGroup(); Messages.hideEmpty();
         ThinkingStream.finalize(evt.data); _hadContent = true;
         break;
@@ -1966,7 +1966,7 @@ const Agent = (function(){
         if(!suppressLiveRender) setSession(evt.data);
         break;
       case 'tool':{
-        if(suppressLiveRender) break;
+        if (suppressLiveRender) break;
         var t = _toolEventInfo(evt.data);
         if(t.phase === 'result'){
           Tools.resolve(t.name, t.ok, t.outcome);
@@ -1993,7 +1993,7 @@ const Agent = (function(){
         LiveActivity.setAlert(evt.data || {});
         break;
       case 'iteration':{
-        if(suppressLiveRender) break;
+        if (suppressLiveRender) break;
         var mi = String(evt.data).match(/(\d+)\/(\d+)/);
         if(mi){
           Stream.finalize(); Tools.endGroup();
@@ -2006,7 +2006,7 @@ const Agent = (function(){
       case 'done':
         // If we already handled stop optimistically, ignore the late SSE echo
         if(evt.data === 'stopped' && state === 'idle') break;
-        if(suppressLiveRender){
+        if (suppressLiveRender){
           var isWait = String(evt.data || '').startsWith('waiting');
           ThinkingStream.finalize();
           Status.iter('');
@@ -2031,7 +2031,7 @@ const Agent = (function(){
         transition('idle'); Status.set('error', 'err'); Status.iter('');
         break;
       case 'plan':{
-        if(suppressLiveRender) break;
+        if (suppressLiveRender) break;
         Stream.finalize(); Tools.endGroup(); Messages.hideEmpty();
         var pb = _makePlanBlock(typeof evt.data === 'object' && evt.data !== null ? evt.data : {});
         Messages.pane().appendChild(pb); Scroll.maybe(); _hadContent = true;

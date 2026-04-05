@@ -34,6 +34,7 @@ class SessionSwitchDuringRunTests(unittest.TestCase):
         event_writes = []
         tl = SimpleNamespace(chatlog_session_id="active-session")
         extra_globals = {
+            "_CHATLOG_USE_CURRENT": object(),
             "_current_session_id": "viewed-session",
             "_tl": tl,
             "_NO_SESSION_KEY": "_none_",
@@ -72,7 +73,7 @@ class SessionSwitchDuringRunTests(unittest.TestCase):
         self.assertIn("shouldSuppressLiveRender", content)
         self.assertIn("suppressLiveRender", content)
         self.assertIn("keepLiveState", content)
-        self.assertIn("if(suppressLiveRender) break;", content)
+        self.assertIn("if (suppressLiveRender) break;", content)
 
 
 if __name__ == "__main__":

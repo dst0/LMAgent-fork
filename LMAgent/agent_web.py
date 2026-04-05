@@ -409,8 +409,8 @@ def _broadcast(item: tuple) -> None:
 
 
 def _get_chatlog_session_id():
-    sid = getattr(_tl, "chatlog_session_id", Ellipsis)
-    return _current_session_id if sid is Ellipsis else sid
+    sid = getattr(_tl, "chatlog_session_id", _CHATLOG_USE_CURRENT)
+    return _current_session_id if sid is _CHATLOG_USE_CURRENT else sid
 
 
 def _build_micro_session(session_summary):
@@ -517,6 +517,7 @@ def _unregister_stream_q(q: queue.Queue) -> None:
 
 _chat_logs:     dict           = defaultdict(list)
 _chat_log_lock: threading.Lock = threading.Lock()
+_CHATLOG_USE_CURRENT = object()
 _NO_SESSION_KEY = "_none_"
 _REPLAY_KINDS   = frozenset({
     "user", "token", "thinking", "tool", "status",
@@ -1294,7 +1295,7 @@ def _execute_agent(message, session_id, request_id, stop_ev,
     finally:
         _tl.stop_event  = None
         _tl.request_id  = None
-        _tl.chatlog_session_id = Ellipsis
+        _tl.chatlog_session_id = _CHATLOG_USE_CURRENT
         _tl.thinking_cb = None
         _tl.token_cb    = None
         with _active_responses_lock:
@@ -1563,7 +1564,7 @@ def chat():
         _current_session_id = session_id
     _tl.chatlog_session_id = session_id
     _broadcast(("user", message))
-    _tl.chatlog_session_id = Ellipsis
+    _tl.chatlog_session_id = _CHATLOG_USE_CURRENT
 
     def _run():
         try:
