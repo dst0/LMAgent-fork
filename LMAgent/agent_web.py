@@ -66,7 +66,7 @@ try:
         Config, Colors, colored, strip_thinking,
         MCPManager, PermissionMode,
         PlanManager, Safety, SessionManager, StateManager, WaitState,
-        SoulConfig, TodoManager, Log, AgentResult,
+        SoulConfig, TodoManager, TaskStateManager, Log, AgentResult,
     )
     from agent_tools import (
         TOOL_SCHEMAS, LLMClient, _REQUIRED_ARG_TOOLS,
@@ -437,11 +437,20 @@ def _chatlog_append(item: tuple) -> None:
     key = _clog_key(_current_session_id)
     with _chat_log_lock:
         _chat_logs[key].append(item)
+    # Persist to disk so history survives server restarts
+    if _current_session_id:
+        _eventlog_write(_current_session_id, item[0], item[1])
 
 
 def _chatlog_get(sid) -> list:
     with _chat_log_lock:
-        return list(_chat_logs.get(_clog_key(sid), []))
+        mem = list(_chat_logs.get(_clog_key(sid), []))
+    if mem:
+        return mem
+    # Fall back to on-disk event log (e.g. after a server restart)
+    if sid:
+        return _eventlog_load(sid)
+    return []
 
 
 def _chatlog_clear(sid) -> None:
@@ -456,6 +465,107 @@ def _chatlog_merge_keys(old_sid, new_sid) -> None:
     with _chat_log_lock:
         if ok in _chat_logs:
             _chat_logs[nk] = _chat_logs.pop(ok, []) + _chat_logs.get(nk, [])
+    # Also merge on-disk event log files when the session key changes.
+    _eventlog_merge_keys(ok, nk)
+
+
+# =============================================================================
+# PERSISTENT EVENT LOG
+# Written to {WORKSPACE}/.lmagent/eventlogs/{session_id}.jsonl
+# Token events are batched for efficiency; all other events written immediately.
+# New sessions with no ID yet use a temporary "_none_" file which is renamed
+# once the real session ID is known (via _chatlog_merge_keys → _eventlog_merge_keys).
+# =============================================================================
+
+_eventlog_token_buf:      dict           = {}   # file_key -> accumulated text
+_eventlog_token_buf_lock: threading.Lock = threading.Lock()
+
+
+def _eventlog_dir() -> Path:
+    d = WORKSPACE / ".lmagent" / "eventlogs"
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def _eventlog_write_raw(file_key: str, kind: str, payload) -> None:
+    """Append one entry to the on-disk event log for *file_key*."""
+    try:
+        entry = json.dumps({"t": kind, "d": payload, "ts": time.time()},
+                           ensure_ascii=False) + "\n"
+        path = _eventlog_dir() / f"{file_key}.jsonl"
+        with open(path, "a", encoding="utf-8") as fh:
+            fh.write(entry)
+    except Exception:
+        pass
+
+
+def _eventlog_flush_tokens(file_key: str) -> None:
+    """Flush accumulated token text for *file_key* as a single log entry."""
+    with _eventlog_token_buf_lock:
+        text = _eventlog_token_buf.pop(file_key, "")
+    if text:
+        _eventlog_write_raw(file_key, "token", text)
+
+
+def _eventlog_write(session_id: str, kind: str, payload) -> None:
+    """Write an SSE event to disk, batching consecutive token events.
+
+    Uses the session_id as the file key; falls back to _NO_SESSION_KEY for
+    sessions whose ID is not yet known (new sessions before run_agent returns).
+    """
+    file_key = session_id if session_id else _NO_SESSION_KEY
+    if kind == "token":
+        with _eventlog_token_buf_lock:
+            _eventlog_token_buf[file_key] = (
+                _eventlog_token_buf.get(file_key, "") + str(payload)
+            )
+    else:
+        _eventlog_flush_tokens(file_key)
+        _eventlog_write_raw(file_key, kind, payload)
+
+
+def _eventlog_merge_keys(old_key: str, new_key: str) -> None:
+    """Rename/merge the on-disk event log from *old_key* to *new_key*."""
+    if old_key == new_key:
+        return
+    # Flush any pending tokens for the old key first
+    _eventlog_flush_tokens(old_key)
+    try:
+        old_path = _eventlog_dir() / f"{old_key}.jsonl"
+        new_path = _eventlog_dir() / f"{new_key}.jsonl"
+        if not old_path.exists():
+            return
+        if new_path.exists():
+            old_bytes = old_path.read_bytes()
+            new_bytes = new_path.read_bytes()
+            new_path.write_bytes(old_bytes + new_bytes)
+            old_path.unlink()
+        else:
+            old_path.rename(new_path)
+    except Exception:
+        pass
+
+
+def _eventlog_load(session_id: str) -> list:
+    """Return list of (kind, payload) tuples from the on-disk event log."""
+    try:
+        path = _eventlog_dir() / f"{session_id}.jsonl"
+        if not path.exists():
+            return []
+        events = []
+        with open(path, "r", encoding="utf-8") as fh:
+            for line in fh:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    obj = json.loads(line)
+                    events.append((obj["t"], obj["d"]))
+                except Exception:
+                    pass
+        return events
+    except Exception:
+        return []
 
 
 # =============================================================================
@@ -1167,12 +1277,24 @@ def slash_command():
         else:
             try:
                 tm    = TodoManager(WORKSPACE, session_id)
-                todos = getattr(tm, "todos", None) or []
+                todos = tm.todos
                 if todos:
-                    lines = [f"Todo List  ({len(todos)} items)", "─" * 40]
+                    completed = sum(1 for t in todos if t.status == "completed")
+                    lines = [
+                        f"Todo List  ({completed}/{len(todos)} completed)",
+                        "─" * 40,
+                    ]
+                    _ICONS = {
+                        "pending":     "○",
+                        "in_progress": "◑",
+                        "completed":   "✓",
+                        "blocked":     "✗",
+                    }
                     for t in todos:
-                        mark = "✓" if t.get("done") or t.get("completed") else "○"
-                        lines.append(f"  {mark}  {t.get('text', t.get('task', ''))}")
+                        icon = _ICONS.get(t.status, "?")
+                        lines.append(f"  {icon}  #{t.id}: {t.description}")
+                        if t.notes:
+                            lines.append(f"       └─ {t.notes}")
                     output = "\n".join(lines)
                 else:
                     output = "No todos for this session."
@@ -1516,6 +1638,104 @@ def serve_file(rel_path: str):
 @_require_auth
 def tools():
     return jsonify(_build_tools_payload())
+
+
+# =============================================================================
+# SESSION INSPECTION ROUTES
+# =============================================================================
+
+@app.route("/session/todos")
+@_require_auth
+def session_todos():
+    """Return todos for a session."""
+    sid = request.args.get("session_id") or _current_session_id
+    if not sid:
+        return jsonify({"error": "no active session"}), 400
+    try:
+        tm = TodoManager(WORKSPACE, sid)
+        return jsonify(tm.list_all())
+    except Exception as e:
+        Log.error(f"[session/todos] {e}")
+        return jsonify({"error": "could not load todos"}), 500
+
+
+@app.route("/session/tasks")
+@_require_auth
+def session_tasks():
+    """Return task-state for a session."""
+    sid = request.args.get("session_id") or _current_session_id
+    if not sid:
+        return jsonify({"error": "no active session"}), 400
+    try:
+        tsm   = TaskStateManager(WORKSPACE, sid)
+        state = tsm.load()
+        return jsonify({"state": state.to_dict() if state else None})
+    except Exception as e:
+        Log.error(f"[session/tasks] {e}")
+        return jsonify({"error": "could not load task state"}), 500
+
+
+@app.route("/session/plan")
+@_require_auth
+def session_plan():
+    """Return the active plan for a session."""
+    sid = request.args.get("session_id") or _current_session_id
+    if not sid:
+        return jsonify({"error": "no active session"}), 400
+    try:
+        pm = PlanManager(WORKSPACE, sid)
+        return jsonify({"plan": pm.plan, "current_step_id": pm.current_step_id})
+    except Exception as e:
+        Log.error(f"[session/plan] {e}")
+        return jsonify({"error": "could not load plan"}), 500
+
+
+@app.route("/session/history")
+@_require_auth
+def session_history():
+    """Return a human-readable conversation history from the persisted session JSON."""
+    sid = request.args.get("session_id") or _current_session_id
+    if not sid:
+        return jsonify({"error": "no active session"}), 400
+    try:
+        sm   = SessionManager(WORKSPACE)
+        data = sm.load(sid)
+        if not data:
+            return jsonify({"error": "session not found"}), 404
+        messages, meta = data
+        readable = []
+        for msg in messages:
+            role    = msg.get("role", "")
+            content = msg.get("content") or ""
+            if role == "user" and content:
+                readable.append({"role": "user", "content": str(content)[:4000]})
+            elif role == "assistant" and content:
+                clean, _ = strip_thinking(str(content))
+                if clean.strip():
+                    readable.append({"role": "assistant", "content": clean[:4000]})
+            elif role == "tool":
+                tool_name = msg.get("name", "tool")
+                try:
+                    result  = json.loads(str(content)) if content else {}
+                    success = bool(result.get("success", True))
+                except Exception:
+                    success = True
+                readable.append({"role": "tool", "name": tool_name, "success": success})
+        return jsonify({"messages": readable, "metadata": meta})
+    except Exception as e:
+        Log.error(f"[session/history] {e}")
+        return jsonify({"error": "could not load session history"}), 500
+
+
+@app.route("/session/eventlog")
+@_require_auth
+def session_eventlog():
+    """Return the SSE event log for a session (persisted to disk)."""
+    sid = request.args.get("session_id") or _current_session_id
+    if not sid:
+        return jsonify({"error": "no active session"}), 400
+    events = _chatlog_get(sid)
+    return jsonify({"events": [[k, v] for k, v in events]})
 
 
 # =============================================================================

@@ -400,6 +400,72 @@ header{
 .si-stat.completed{color:var(--green)}.si-stat.error,.si-stat.interrupted{color:var(--red)}
 .si-stat.waiting{color:var(--purple)}.si-stat.active{color:var(--amber)}
 
+/* Session inspect panel */
+#session-inspect-panel{width:min(420px,96vw)}
+#si-body{flex:1;overflow-y:auto;padding:0 0 10px}
+.si-section{border-bottom:1px solid var(--border)}
+.si-section-hdr{display:flex;align-items:center;justify-content:space-between;padding:8px 11px 6px;cursor:pointer;user-select:none;gap:6px}
+.si-section-hdr:hover{background:var(--surface2)}
+.si-section-title{font-family:var(--sans);font-weight:600;font-size:9.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--text3);flex:1}
+.si-section-badge{font-size:9px;color:var(--text3);background:var(--surface3);border-radius:3px;padding:1px 5px}
+.si-section-arrow{font-size:9px;color:var(--text3);transition:transform .15s}
+.si-section.open .si-section-arrow{transform:rotate(90deg)}
+.si-section-body{display:none;padding:0 11px 8px}
+.si-section.open .si-section-body{display:block}
+
+/* Progress bar */
+.si-progress{display:flex;align-items:center;gap:7px;margin-bottom:7px}
+.si-progress-bar{flex:1;height:4px;background:var(--surface3);border-radius:2px;overflow:hidden}
+.si-progress-fill{height:100%;background:var(--teal);border-radius:2px;transition:width .3s}
+.si-progress-label{font-size:9.5px;color:var(--text3);white-space:nowrap;flex-shrink:0}
+
+/* Todo items */
+.si-todo{display:flex;align-items:flex-start;gap:6px;padding:4px 0;border-bottom:1px solid var(--border);font-size:11px}
+.si-todo:last-child{border-bottom:none}
+.si-todo-icon{flex-shrink:0;width:14px;text-align:center;font-size:12px;margin-top:1px}
+.si-todo-body{flex:1;min-width:0}
+.si-todo-desc{color:var(--text2);line-height:1.4;word-break:break-word}
+.si-todo.status-completed .si-todo-desc{color:var(--text3);text-decoration:line-through}
+.si-todo.status-blocked .si-todo-desc{color:var(--red)}
+.si-todo.status-in_progress .si-todo-desc{color:var(--amber)}
+.si-todo-meta{display:flex;gap:6px;margin-top:2px;align-items:center}
+.si-todo-id{font-size:9px;color:var(--text3)}
+.si-todo-status{font-size:8.5px;padding:1px 4px;border-radius:2px;text-transform:uppercase;letter-spacing:.04em}
+.si-todo-status.pending{color:var(--text3);background:var(--surface3)}
+.si-todo-status.in_progress{color:var(--amber);background:var(--amber-dim)}
+.si-todo-status.completed{color:var(--green);background:rgba(62,201,122,.12)}
+.si-todo-status.blocked{color:var(--red);background:var(--red-dim)}
+.si-todo-notes{font-size:10px;color:var(--text3);margin-top:2px;font-style:italic}
+
+/* Task state */
+.si-kv{display:flex;flex-direction:column;gap:3px;margin-bottom:5px}
+.si-kv-row{display:flex;gap:6px;font-size:10.5px;line-height:1.4}
+.si-kv-k{color:var(--text3);min-width:90px;flex-shrink:0;font-size:9.5px;text-transform:uppercase;letter-spacing:.04em;padding-top:1px}
+.si-kv-v{color:var(--text2);word-break:break-word;flex:1}
+.si-queue{margin-top:6px}
+.si-queue-title{font-size:9px;text-transform:uppercase;letter-spacing:.06em;color:var(--text3);margin-bottom:4px}
+.si-queue-item{font-size:10px;color:var(--text2);padding:2px 0;border-bottom:1px solid var(--border)}
+.si-queue-item:last-child{border-bottom:none}
+
+/* Session history */
+.si-hist-msg{padding:5px 0;border-bottom:1px solid var(--border);font-size:11px}
+.si-hist-msg:last-child{border-bottom:none}
+.si-hist-role{font-size:8.5px;font-family:var(--sans);font-weight:600;letter-spacing:.06em;text-transform:uppercase;margin-bottom:3px}
+.si-hist-role.user{color:var(--amber)}
+.si-hist-role.assistant{color:var(--teal)}
+.si-hist-role.tool{color:var(--text3)}
+.si-hist-content{color:var(--text2);line-height:1.45;white-space:pre-wrap;word-break:break-word;max-height:120px;overflow:hidden;position:relative}
+.si-hist-content.expanded{max-height:none}
+.si-hist-expand{font-size:9px;color:var(--teal);cursor:pointer;margin-top:2px;display:inline-block}
+.si-hist-tool{display:flex;align-items:center;gap:5px}
+.si-hist-tool-icon{font-size:11px}
+.si-hist-tool-name{color:var(--text2);font-size:10.5px}
+.si-empty{padding:10px 0;color:var(--text3);font-size:10.5px;font-style:italic}
+.si-refresh-row{display:flex;align-items:center;justify-content:space-between;padding:6px 11px 4px;border-bottom:1px solid var(--border);flex-shrink:0}
+.si-session-label{font-size:9px;color:var(--text3);font-family:var(--mono)}
+.si-refresh-btn{font-size:10px;color:var(--text3);cursor:pointer;padding:1px 6px;border-radius:3px;border:1px solid transparent;transition:all .1s}
+.si-refresh-btn:hover{border-color:var(--border2);color:var(--text2)}
+
 /* Tools panel */
 #tools-search{margin:7px;background:var(--bg);border:1px solid var(--border);border-radius:5px;color:var(--text);font-family:var(--mono);font-size:11.5px;padding:5px 9px;outline:none;width:calc(100% - 14px);flex-shrink:0}
 #tools-search:focus{border-color:var(--teal)}
@@ -493,6 +559,7 @@ header{
       <button class="btn" onclick="UI.toggleFiles()">Files</button>
       <button class="btn accent" onclick="UI.toggleTools()">Tools</button>
       <button class="btn" onclick="UI.toggleSessions()">Sessions</button>
+      <button class="btn" onclick="UI.toggleInspect()" title="Inspect current session state">Inspect</button>
       <button class="btn" id="msg-btn" onclick="UI.toggleMessaging()"><span id="msg-btn-dot"></span>Msg</button>
       <button class="btn danger" onclick="Agent.newSession()">New</button>
     </div>
@@ -568,6 +635,59 @@ header{
 <div class="panel" id="sessions-panel">
   <div class="panel-hdr"><span>Sessions</span><button class="btn" onclick="UI.closeSessions()">✕</button></div>
   <div id="sessions-list"></div>
+</div>
+
+<!-- Session inspect panel -->
+<div class="panel" id="session-inspect-panel">
+  <div class="panel-hdr">
+    <span>Inspect</span>
+    <div style="display:flex;gap:4px;align-items:center">
+      <button class="ft-icon-btn" onclick="SessionInspect.refresh()" title="Refresh">⟳</button>
+      <button class="btn" onclick="UI.closeInspect()">✕</button>
+    </div>
+  </div>
+  <div class="si-refresh-row">
+    <span class="si-session-label" id="si-session-label">No active session</span>
+    <span class="si-refresh-btn" onclick="SessionInspect.refresh()">⟳ refresh</span>
+  </div>
+  <div id="si-body">
+    <!-- Todos section -->
+    <div class="si-section open" id="si-todos-section">
+      <div class="si-section-hdr" onclick="SessionInspect.toggleSection('todos')">
+        <span class="si-section-title">📋 Todos</span>
+        <span class="si-section-badge" id="si-todos-badge">—</span>
+        <span class="si-section-arrow">▶</span>
+      </div>
+      <div class="si-section-body" id="si-todos-body"><div class="si-empty">Loading…</div></div>
+    </div>
+    <!-- Task state section -->
+    <div class="si-section open" id="si-tasks-section">
+      <div class="si-section-hdr" onclick="SessionInspect.toggleSection('tasks')">
+        <span class="si-section-title">⚙ Task State</span>
+        <span class="si-section-badge" id="si-tasks-badge">—</span>
+        <span class="si-section-arrow">▶</span>
+      </div>
+      <div class="si-section-body" id="si-tasks-body"><div class="si-empty">Loading…</div></div>
+    </div>
+    <!-- Plan section -->
+    <div class="si-section" id="si-plan-section">
+      <div class="si-section-hdr" onclick="SessionInspect.toggleSection('plan')">
+        <span class="si-section-title">🗺 Plan</span>
+        <span class="si-section-badge" id="si-plan-badge">—</span>
+        <span class="si-section-arrow">▶</span>
+      </div>
+      <div class="si-section-body" id="si-plan-body"><div class="si-empty">Loading…</div></div>
+    </div>
+    <!-- History section -->
+    <div class="si-section" id="si-history-section">
+      <div class="si-section-hdr" onclick="SessionInspect.toggleSection('history')">
+        <span class="si-section-title">💬 Session History</span>
+        <span class="si-section-badge" id="si-history-badge">—</span>
+        <span class="si-section-arrow">▶</span>
+      </div>
+      <div class="si-section-body" id="si-history-body"><div class="si-empty">Loading…</div></div>
+    </div>
+  </div>
 </div>
 
 <!-- Tools panel -->
@@ -1184,6 +1304,9 @@ const Agent = (function(){
   }
 
   function handleEvent(evt){
+    // Always forward to SessionInspect for real-time status updates
+    SessionInspect.onEvent(evt);
+
     // Handle connect packet — always process regardless of messaging mode
     if(evt.type === 'connect'){
       var d = evt.data || {};
@@ -1532,6 +1655,8 @@ const FileTree = (function(){
 // SESSIONS
 // ─────────────────────────────────────────────────────────────────────────────
 const Sessions = (function(){
+  var _selectedId = null;
+
   async function load(){
     var list = document.getElementById('sessions-list'); if(!list) return;
     list.innerHTML = '<div style="padding:11px;color:var(--text3);font-size:10.5px">Loading…</div>';
@@ -1544,12 +1669,248 @@ const Sessions = (function(){
         item.className = 'session-item' + (Agent.getSession() === s.id ? ' active' : '');
         var statClass = s.status === 'completed' ? 'completed' : (s.status === 'error' || s.status === 'interrupted') ? 'error' : s.status === 'waiting' ? 'waiting' : s.status === 'active' ? 'active' : '';
         item.innerHTML = '<div class="si-id">' + _esc(s.id.slice(-12)) + '</div><div class="si-task">' + _esc(s.task || '(no task)') + '</div><div class="si-stat ' + statClass + '">' + _esc(s.status) + (s.iterations ? ' · ' + s.iterations + ' iter' : '') + '</div>';
-        item.onclick = function(){ Agent.setSession(s.id); UI.closeSessions(); document.getElementById('msg-input').focus(); };
+        item.onclick = function(){
+          _selectedId = s.id;
+          // Switch to the inspect panel showing this session
+          SessionInspect.loadSession(s.id);
+          UI.closeAll();
+          UI.toggleInspect();
+        };
         list.appendChild(item);
       });
     }catch(e){ list.innerHTML = '<div style="padding:11px;color:var(--red);font-size:10.5px">⚠ ' + _esc(String(e.message || e)) + '</div>'; }
   }
   return {load};
+})();
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SESSION INSPECT
+// ─────────────────────────────────────────────────────────────────────────────
+const SessionInspect = (function(){
+  var _sid = null, _autoTimer = null;
+
+  function _setSid(id){
+    _sid = id;
+    var lbl = document.getElementById('si-session-label');
+    if(lbl) lbl.textContent = id ? ('session: ' + id.slice(-12)) : 'No active session';
+  }
+
+  function toggleSection(name){
+    var sec = document.getElementById('si-' + name + '-section'); if(!sec) return;
+    sec.classList.toggle('open');
+  }
+
+  // ── Todos ──
+  function _renderTodos(data){
+    var body = document.getElementById('si-todos-body');
+    var badge = document.getElementById('si-todos-badge');
+    if(!body) return;
+    if(data.error){ body.innerHTML = '<div class="si-empty">⚠ ' + _esc(data.error) + '</div>'; if(badge) badge.textContent = '!'; return; }
+    var todos = data.todos || [];
+    var completed = data.completed || 0, total = data.total || 0;
+    if(badge) badge.textContent = completed + '/' + total;
+    if(!todos.length){ body.innerHTML = '<div class="si-empty">No todos</div>'; return; }
+    // Progress bar
+    var pct = total > 0 ? Math.round(completed / total * 100) : 0;
+    var html = '<div class="si-progress"><div class="si-progress-bar"><div class="si-progress-fill" style="width:' + pct + '%"></div></div><span class="si-progress-label">' + completed + '/' + total + ' (' + pct + '%)</span></div>';
+    var _ICONS = {pending:'⏳', in_progress:'🔄', completed:'✅', blocked:'🚫'};
+    todos.forEach(function(t){
+      var icon = _ICONS[t.status] || '❓';
+      html += '<div class="si-todo status-' + _esc(t.status) + '">';
+      html += '<div class="si-todo-icon">' + icon + '</div>';
+      html += '<div class="si-todo-body">';
+      html += '<div class="si-todo-desc">' + _esc(t.description) + '</div>';
+      html += '<div class="si-todo-meta"><span class="si-todo-id">#' + _esc(String(t.id)) + '</span><span class="si-todo-status ' + _esc(t.status) + '">' + _esc(t.status.replace('_', ' ')) + '</span></div>';
+      if(t.notes) html += '<div class="si-todo-notes">' + _esc(t.notes) + '</div>';
+      html += '</div></div>';
+    });
+    body.innerHTML = html;
+  }
+
+  // ── Task State ──
+  function _renderTasks(data){
+    var body = document.getElementById('si-tasks-body');
+    var badge = document.getElementById('si-tasks-badge');
+    if(!body) return;
+    if(data.error){ body.innerHTML = '<div class="si-empty">⚠ ' + _esc(data.error) + '</div>'; if(badge) badge.textContent = '!'; return; }
+    var s = data.state;
+    if(!s){ body.innerHTML = '<div class="si-empty">No task state</div>'; if(badge) badge.textContent = '—'; return; }
+    var pct = s.total_count > 0 ? Math.round(s.processed_count / s.total_count * 100) : 0;
+    if(badge) badge.textContent = s.processed_count + '/' + s.total_count;
+    var html = '';
+    if(s.total_count > 0){
+      html += '<div class="si-progress"><div class="si-progress-bar"><div class="si-progress-fill" style="width:' + pct + '%"></div></div><span class="si-progress-label">' + s.processed_count + '/' + s.total_count + ' (' + pct + '%)</span></div>';
+    }
+    html += '<div class="si-kv">';
+    if(s.objective)   html += '<div class="si-kv-row"><span class="si-kv-k">Objective</span><span class="si-kv-v">' + _esc(s.objective) + '</span></div>';
+    if(s.next_action) html += '<div class="si-kv-row"><span class="si-kv-k">Next action</span><span class="si-kv-v">' + _esc(s.next_action) + '</span></div>';
+    if(s.last_error)  html += '<div class="si-kv-row"><span class="si-kv-k" style="color:var(--red)">Last error</span><span class="si-kv-v" style="color:var(--red)">' + _esc(s.last_error) + '</span></div>';
+    if(s.last_updated) html += '<div class="si-kv-row"><span class="si-kv-k">Updated</span><span class="si-kv-v">' + _esc(s.last_updated.slice(0,19).replace('T',' ')) + '</span></div>';
+    html += '</div>';
+    if(s.remaining_queue && s.remaining_queue.length){
+      html += '<div class="si-queue"><div class="si-queue-title">Remaining (' + s.remaining_queue.length + ')</div>';
+      s.remaining_queue.slice(0,8).forEach(function(item){ html += '<div class="si-queue-item">' + _esc(item) + '</div>'; });
+      if(s.remaining_queue.length > 8) html += '<div class="si-queue-item" style="color:var(--text3)">…and ' + (s.remaining_queue.length - 8) + ' more</div>';
+      html += '</div>';
+    }
+    body.innerHTML = html;
+  }
+
+  // ── Plan ──
+  function _renderPlan(data){
+    var body = document.getElementById('si-plan-body');
+    var badge = document.getElementById('si-plan-badge');
+    if(!body) return;
+    if(data.error){ body.innerHTML = '<div class="si-empty">⚠ ' + _esc(data.error) + '</div>'; if(badge) badge.textContent = '!'; return; }
+    var plan = data.plan;
+    if(!plan){ body.innerHTML = '<div class="si-empty">No active plan</div>'; if(badge) badge.textContent = '—'; return; }
+    var steps = plan.steps || [], total = steps.length;
+    var done = steps.filter(function(s){ return s.status === 'completed'; }).length;
+    if(badge) badge.textContent = done + '/' + total;
+    var _ICONS = {pending:'⏳', in_progress:'🔄', completed:'✅', skipped:'⏭'};
+    var html = '';
+    if(plan.title) html += '<div style="font-size:11.5px;font-weight:600;color:var(--text);margin-bottom:7px">' + _esc(plan.title) + '</div>';
+    steps.forEach(function(s, i){
+      var icon = _ICONS[s.status] || '❓';
+      html += '<div class="si-todo status-' + _esc(s.status) + '" style="align-items:flex-start">';
+      html += '<div class="si-todo-icon">' + icon + '</div>';
+      html += '<div class="si-todo-body">';
+      html += '<div class="si-todo-desc">' + _esc(s.description || '') + '</div>';
+      if(s.verification) html += '<div class="si-todo-notes">✓ ' + _esc(s.verification) + '</div>';
+      html += '</div></div>';
+    });
+    body.innerHTML = html || '<div class="si-empty">No steps</div>';
+  }
+
+  // ── History ──
+  function _renderHistory(data){
+    var body = document.getElementById('si-history-body');
+    var badge = document.getElementById('si-history-badge');
+    if(!body) return;
+    if(data.error){ body.innerHTML = '<div class="si-empty">⚠ ' + _esc(data.error) + '</div>'; if(badge) badge.textContent = '!'; return; }
+    var msgs = data.messages || [];
+    if(badge) badge.textContent = msgs.length;
+    if(!msgs.length){ body.innerHTML = '<div class="si-empty">No messages yet</div>'; return; }
+    var html = '';
+    msgs.forEach(function(m, idx){
+      html += '<div class="si-hist-msg">';
+      if(m.role === 'user'){
+        html += '<div class="si-hist-role user">You</div>';
+        var cnt = _esc(m.content || '');
+        var long = (m.content || '').length > 300;
+        html += '<div class="si-hist-content' + (long ? '' : ' expanded') + '" id="si-hc-' + idx + '">' + cnt + '</div>';
+        if(long) html += '<span class="si-hist-expand" onclick="SessionInspect.expandHist(\'si-hc-' + idx + '\',this)">show more</span>';
+      } else if(m.role === 'assistant'){
+        html += '<div class="si-hist-role assistant">Agent</div>';
+        var cnt2 = _esc(m.content || '');
+        var long2 = (m.content || '').length > 400;
+        html += '<div class="si-hist-content' + (long2 ? '' : ' expanded') + '" id="si-hc-' + idx + '">' + cnt2 + '</div>';
+        if(long2) html += '<span class="si-hist-expand" onclick="SessionInspect.expandHist(\'si-hc-' + idx + '\',this)">show more</span>';
+      } else if(m.role === 'tool'){
+        var ok = m.success === true || m.success === undefined;
+        html += '<div class="si-hist-role tool">Tool</div>';
+        html += '<div class="si-hist-tool"><span class="si-hist-tool-icon">' + (ok ? '✓' : '✗') + '</span><span class="si-hist-tool-name">' + _esc(m.name || '') + '</span></div>';
+      }
+      html += '</div>';
+    });
+    body.innerHTML = html;
+  }
+
+  function expandHist(id, btn){
+    var el = document.getElementById(id); if(!el) return;
+    el.classList.add('expanded'); btn.remove();
+  }
+
+  async function _fetchAll(sid){
+    if(!sid) return;
+    try{
+      var [todos, tasks, plan, hist] = await Promise.all([
+        fetch('/session/todos?session_id=' + encodeURIComponent(sid)).then(function(r){ return r.json(); }),
+        fetch('/session/tasks?session_id=' + encodeURIComponent(sid)).then(function(r){ return r.json(); }),
+        fetch('/session/plan?session_id='  + encodeURIComponent(sid)).then(function(r){ return r.json(); }),
+        fetch('/session/history?session_id=' + encodeURIComponent(sid)).then(function(r){ return r.json(); }),
+      ]);
+      _renderTodos(todos);
+      _renderTasks(tasks);
+      _renderPlan(plan);
+      _renderHistory(hist);
+    }catch(e){
+      var msg = '<div class="si-empty">⚠ ' + _esc(String(e.message || e)) + '</div>';
+      ['si-todos-body','si-tasks-body','si-plan-body','si-history-body'].forEach(function(id){
+        var el = document.getElementById(id); if(el) el.innerHTML = msg;
+      });
+    }
+  }
+
+  async function _fetchTodos(sid){ if(!sid) return; try{ _renderTodos(await fetch('/session/todos?session_id='+encodeURIComponent(sid)).then(function(r){ return r.json(); })); }catch(_){} }
+  async function _fetchTasks(sid){ if(!sid) return; try{ _renderTasks(await fetch('/session/tasks?session_id='+encodeURIComponent(sid)).then(function(r){ return r.json(); })); }catch(_){} }
+  async function _fetchPlan(sid){  if(!sid) return; try{ _renderPlan(await fetch('/session/plan?session_id='+encodeURIComponent(sid)).then(function(r){ return r.json(); })); }catch(_){} }
+  async function _fetchHistory(sid){ if(!sid) return; try{ _renderHistory(await fetch('/session/history?session_id='+encodeURIComponent(sid)).then(function(r){ return r.json(); })); }catch(_){} }
+
+  // Tool names that affect each section
+  var _TODO_TOOLS = ['todo_add','todo_complete','todo_update','todo_list'];
+  var _TASK_TOOLS = ['task_state_update','task_state_get','task_reconcile'];
+  var _PLAN_TOOLS = ['plan_complete_step'];
+
+  var _lastRefresh = 0;
+
+  function refresh(){
+    _lastRefresh = Date.now();
+    var sid = _sid || Agent.getSession();
+    if(sid !== _sid) _setSid(sid);
+    _fetchAll(sid);
+  }
+
+  function loadSession(id){
+    _setSid(id);
+    _fetchAll(id);
+  }
+
+  // Called by Agent.handleEvent for real-time updates
+  function onEvent(evt){
+    var sid = _sid || Agent.getSession();
+    if(!sid) return;
+    var panel = document.getElementById('session-inspect-panel');
+    var panelOpen = panel && panel.classList.contains('open');
+
+    if(evt.type === 'plan'){
+      // Plan created/updated — render immediately from event data, then re-fetch for full state
+      if(panelOpen) _renderPlan({plan: typeof evt.data === 'object' ? evt.data : null});
+      setTimeout(function(){ _fetchPlan(sid); }, 300);
+    } else if(evt.type === 'tool'){
+      var raw = String(evt.data || '');
+      var isResult = raw.startsWith('✓') || raw.startsWith('✗');
+      var toolName = isResult ? raw.slice(1).trim() : raw.split('(')[0].trim();
+      if(isResult){
+        if(_TODO_TOOLS.indexOf(toolName) !== -1) { setTimeout(function(){ _fetchTodos(sid); }, 200); }
+        if(_TASK_TOOLS.indexOf(toolName) !== -1) { setTimeout(function(){ _fetchTasks(sid); }, 200); }
+        if(_PLAN_TOOLS.indexOf(toolName) !== -1) { setTimeout(function(){ _fetchPlan(sid); }, 200); }
+      }
+    } else if(evt.type === 'iteration'){
+      // On each iteration boundary, refresh todos + tasks (most likely to have changed)
+      if(panelOpen){ _fetchTodos(sid); _fetchTasks(sid); }
+    } else if(evt.type === 'done' || evt.type === 'complete'){
+      // Final state — refresh everything including history
+      setTimeout(function(){ _fetchAll(sid); }, 400);
+    }
+  }
+
+  function _startAutoRefresh(){
+    if(_autoTimer) clearInterval(_autoTimer);
+    // Tick every second; decide whether to fetch based on running state + elapsed time
+    _autoTimer = setInterval(function(){
+      var panel = document.getElementById('session-inspect-panel');
+      if(!panel || !panel.classList.contains('open')) return;
+      var interval = Agent.running() ? 2000 : 6000;
+      if((Date.now() - _lastRefresh) >= interval) refresh();
+    }, 1000);
+  }
+
+  function init(){
+    _startAutoRefresh();
+  }
+
+  return {refresh, loadSession, toggleSection, expandHist, init, onEvent};
 })();
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1635,21 +1996,23 @@ const Palette = (function(){
 // ─────────────────────────────────────────────────────────────────────────────
 const UI = (function(){
   var overlay = function(){ return document.getElementById('overlay'); };
-  var ALL = ['files-panel','sessions-panel','tools-panel','messaging-panel'];
+  var ALL = ['files-panel','sessions-panel','tools-panel','messaging-panel','session-inspect-panel'];
   function _openPanel(id){ document.getElementById(id).classList.add('open'); overlay().classList.add('show'); }
   function _closePanel(id){ document.getElementById(id).classList.remove('open'); }
   function closeAll(){ ALL.forEach(_closePanel); overlay().classList.remove('show'); }
   function _toggle(id, onOpen){ var p = document.getElementById(id); if(p.classList.contains('open')) closeAll(); else{ closeAll(); _openPanel(id); onOpen && onOpen(); } }
   document.addEventListener('keydown', function(e){ if(e.key === 'Escape' && !HTMLPreview.isOpen()) closeAll(); });
   return {
-    toggleFiles:     function(){ _toggle('files-panel',     function(){ FileTree.load(); }); },
-    toggleSessions:  function(){ _toggle('sessions-panel',  function(){ Sessions.load(); }); },
-    toggleTools:     function(){ _toggle('tools-panel',     function(){ ToolsPanel.load(); }); },
-    toggleMessaging: function(){ _toggle('messaging-panel', function(){ Messaging.refresh(); }); },
-    closeFiles:     function(){ _closePanel('files-panel');     overlay().classList.remove('show'); },
-    closeSessions:  function(){ _closePanel('sessions-panel');  overlay().classList.remove('show'); },
-    closeTools:     function(){ _closePanel('tools-panel');     overlay().classList.remove('show'); },
-    closeMessaging: function(){ _closePanel('messaging-panel'); overlay().classList.remove('show'); },
+    toggleFiles:     function(){ _toggle('files-panel',            function(){ FileTree.load(); }); },
+    toggleSessions:  function(){ _toggle('sessions-panel',         function(){ Sessions.load(); }); },
+    toggleTools:     function(){ _toggle('tools-panel',            function(){ ToolsPanel.load(); }); },
+    toggleMessaging: function(){ _toggle('messaging-panel',        function(){ Messaging.refresh(); }); },
+    toggleInspect:   function(){ _toggle('session-inspect-panel',  function(){ SessionInspect.refresh(); }); },
+    closeFiles:     function(){ _closePanel('files-panel');            overlay().classList.remove('show'); },
+    closeSessions:  function(){ _closePanel('sessions-panel');         overlay().classList.remove('show'); },
+    closeTools:     function(){ _closePanel('tools-panel');            overlay().classList.remove('show'); },
+    closeMessaging: function(){ _closePanel('messaging-panel');        overlay().classList.remove('show'); },
+    closeInspect:   function(){ _closePanel('session-inspect-panel'); overlay().classList.remove('show'); },
     closeAll,
   };
 })();
@@ -1659,6 +2022,7 @@ const UI = (function(){
 // ─────────────────────────────────────────────────────────────────────────────
 Status.set('ready', '');
 Messaging.init();
+SessionInspect.init();
 </script>
 </body>
 </html>
