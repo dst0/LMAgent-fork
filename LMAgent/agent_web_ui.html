@@ -235,6 +235,8 @@ header{
 .tr-name{color:var(--text2);font-weight:500}
 .tool-row.has-label .tr-name{color:var(--text3);font-size:9px;font-weight:400}
 .tr-args{color:var(--amber2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:220px;font-size:10px}
+.tr-outcome{color:var(--text2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;min-width:0}
+.tool-row[data-s=fail] .tr-outcome{color:var(--red)}
 .tool-row[data-s=pending] .tr-icon{color:var(--text3);animation:spin .8s linear infinite}
 .tool-row[data-s=ok]   .tr-icon{color:var(--green)}
 .tool-row[data-s=fail] .tr-icon{color:var(--red)}
@@ -802,6 +804,7 @@ const _TOKEN = '__AGENT_TOKEN__';
 // UTILITIES
 // ─────────────────────────────────────────────────────────────────────────────
 var MAX_ARGS_DISPLAY_LENGTH = 50;
+var MAX_OUTCOME_DISPLAY_LENGTH = 120;
 function _esc(s){ return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;'); }
 
 // Extract the primary human-readable argument from a tool's JSON args string.
@@ -838,6 +841,75 @@ function _fmtPrimaryArg(toolName, argsJson){
   if(primary) return primary.length > MAX_ARGS_DISPLAY_LENGTH ? primary.slice(0, MAX_ARGS_DISPLAY_LENGTH) + '…' : primary;
   if(!argsJson) return '';
   return argsJson.slice(0, MAX_ARGS_DISPLAY_LENGTH) + (argsJson.length > MAX_ARGS_DISPLAY_LENGTH ? '…' : '');
+}
+
+function _fmtOutcomeText(outcome){
+  var text = outcome == null ? '' : String(outcome).trim();
+  return text.length > MAX_OUTCOME_DISPLAY_LENGTH ? text.slice(0, MAX_OUTCOME_DISPLAY_LENGTH) + '…' : text;
+}
+
+function _setToolOutcome(row, outcome){
+  row.dataset.outcome = outcome == null ? '' : String(outcome).trim();
+  var el = row.querySelector('.tr-outcome');
+  if(!row.dataset.outcome){
+    if(el) el.remove();
+    return;
+  }
+  if(!el){
+    el = document.createElement('span');
+    el.className = 'tr-outcome';
+    row.appendChild(el);
+  }
+  el.textContent = '→ ' + _fmtOutcomeText(row.dataset.outcome);
+  el.title = row.dataset.outcome;
+}
+
+function _renderToolDetail(row, detail){
+  detail.innerHTML = '';
+  var toolName = row.dataset.toolName || '';
+  var fullArgs = row.dataset.args || '';
+  var outcome = row.dataset.outcome || '';
+  if(toolName){
+    var nlbl = document.createElement('div'); nlbl.className = 'tr-detail-lbl'; nlbl.textContent = 'tool';
+    var ntxt = document.createElement('div'); ntxt.style.marginBottom = '5px'; ntxt.textContent = toolName;
+    detail.appendChild(nlbl); detail.appendChild(ntxt);
+  }
+  if(fullArgs){
+    var albl = document.createElement('div'); albl.className = 'tr-detail-lbl'; albl.textContent = 'args';
+    var atxt = document.createElement('div');
+    try{ atxt.textContent = JSON.stringify(JSON.parse(fullArgs), null, 2); }
+    catch(e){ atxt.textContent = fullArgs; }
+    detail.appendChild(albl); detail.appendChild(atxt);
+  }
+  if(outcome){
+    var olbl = document.createElement('div'); olbl.className = 'tr-detail-lbl'; olbl.textContent = 'outcome';
+    var otxt = document.createElement('div'); otxt.textContent = outcome;
+    detail.appendChild(olbl); detail.appendChild(otxt);
+  }
+}
+
+function _toolEventInfo(payload){
+  if(payload && typeof payload === 'object'){
+    return {
+      phase: payload.phase === 'result' ? 'result' : 'call',
+      name: String(payload.name || ''),
+      args: payload.args_preview == null ? '' : String(payload.args_preview),
+      ok: payload.phase === 'result' ? !!payload.success : null,
+      outcome: payload.outcome == null ? '' : String(payload.outcome)
+    };
+  }
+  var raw = String(payload || '');
+  if(raw.startsWith('✓') || raw.startsWith('✗')){
+    return {phase:'result', name:raw.slice(1).trim(), args:'', ok:raw.startsWith('✓'), outcome:''};
+  }
+  var m = raw.match(/^([^(]+)\(?([\s\S]*?)\)?$/);
+  return {
+    phase:'call',
+    name:m ? m[1].trim() : raw,
+    args:m ? m[2].trim() : '',
+    ok:null,
+    outcome:''
+  };
 }
 
 // ── Tool label map (tool function name → short human-readable description) ──
@@ -972,8 +1044,8 @@ function _makeStepCollapsible(wrap, raw){
 }
 
 // Make a tool row clickable to reveal its full arguments.
-function _makeToolRowExpandable(row, fullArgs, toolName){
-  if(!fullArgs && !toolName) return;
+function _makeToolRowExpandable(row){
+  if(!row.dataset.args && !row.dataset.toolName && !row.dataset.outcome) return;
   row.classList.add('tr-expandable');
   row.onclick = function(){
     var next = row.nextSibling;
@@ -981,18 +1053,7 @@ function _makeToolRowExpandable(row, fullArgs, toolName){
       next.classList.toggle('open');
     } else {
       var det = document.createElement('div'); det.className = 'tr-detail open';
-      if(toolName){
-        var nlbl = document.createElement('div'); nlbl.className = 'tr-detail-lbl'; nlbl.textContent = 'tool';
-        var ntxt = document.createElement('div'); ntxt.style.marginBottom = '5px'; ntxt.textContent = toolName;
-        det.appendChild(nlbl); det.appendChild(ntxt);
-      }
-      if(fullArgs){
-        var albl = document.createElement('div'); albl.className = 'tr-detail-lbl'; albl.textContent = 'args';
-        var atxt = document.createElement('div');
-        try{ atxt.textContent = JSON.stringify(JSON.parse(fullArgs), null, 2); }
-        catch(e){ atxt.textContent = fullArgs; }
-        det.appendChild(albl); det.appendChild(atxt);
-      }
+      _renderToolDetail(row, det);
       row.parentNode.insertBefore(det, row.nextSibling);
     }
   };
@@ -1254,12 +1315,15 @@ const Tools = (function(){
     var label = _getToolLabel(name);
     var row = document.createElement('div');
     row.className = 'tool-row' + (label ? ' has-label' : ''); row.dataset.s = 'pending';
+    row.dataset.toolName = name || '';
+    row.dataset.args = args || '';
+    row.dataset.outcome = '';
     var pv = _fmtPrimaryArg(name, args);
     var nameHtml = label
       ? '<span class="tr-label">' + _esc(label) + '</span>'
       : '<span class="tr-name">' + _esc(name) + '</span>';
     row.innerHTML = '<span class="tr-icon">◌</span>' + nameHtml + (pv ? '<span class="tr-args">`' + _esc(pv) + '`</span>' : '');
-    _makeToolRowExpandable(row, args, name);
+    _makeToolRowExpandable(row);
     if(!pending.has(name)) pending.set(name, []);
     pending.get(name).push(row); return row;
   }
@@ -1273,10 +1337,13 @@ const Tools = (function(){
     } else { g.appendChild(makeRow(name, args)); }
     Scroll.maybe();
   }
-  function resolve(name, ok){
+  function resolve(name, ok, outcome){
     var q = pending.get(name); if(!q || !q.length) return;
     var row = q.shift(); if(!q.length) pending.delete(name); if(!row) return;
     row.dataset.s = ok ? 'ok' : 'fail'; row.querySelector('.tr-icon').textContent = ok ? '✓' : '✗';
+    _setToolOutcome(row, outcome);
+    var next = row.nextSibling;
+    if(next && next.classList && next.classList.contains('tr-detail')) _renderToolDetail(row, next);
   }
   function reset(){ pending.clear(); endGroup(); }
   return {call, resolve, endGroup, reset};
@@ -1306,24 +1373,28 @@ const Replay = (function(){
       var body = wrap.querySelector('.msg-body'); body.innerHTML = MD.render(tokBuf) || _esc(tokBuf);
       var raw = tokBuf; _addCopyBtn(wrap, raw); _makeStepCollapsible(wrap, raw); pane.appendChild(wrap); tokBuf = '';
     }
-    function flushTools(){
-      if(!toolItems.length) return; hideEmpty();
-      var g = document.createElement('div'); g.className = 'tool-group';
-      toolItems.forEach(function(t){
-        var label = _getToolLabel(t.name);
-        var row = document.createElement('div');
-        row.className = 'tool-row' + (label ? ' has-label' : '');
-        row.dataset.s = t.ok === null ? 'pending' : (t.ok ? 'ok' : 'fail');
-        var pv = _fmtPrimaryArg(t.name, t.args);
-        var nameHtml = label
-          ? '<span class="tr-label">' + _esc(label) + '</span>'
-          : '<span class="tr-name">' + _esc(t.name) + '</span>';
-        row.innerHTML = '<span class="tr-icon">' + (t.ok === null ? '◌' : (t.ok ? '✓' : '✗')) + '</span>' + nameHtml + (pv ? '<span class="tr-args">`' + _esc(pv) + '`</span>' : '');
-        _makeToolRowExpandable(row, t.args, t.name);
-        g.appendChild(row);
-      });
-      _finaliseToolGroup(g, toolItems.length); pane.appendChild(g); toolItems = [];
-    }
+      function flushTools(){
+        if(!toolItems.length) return; hideEmpty();
+        var g = document.createElement('div'); g.className = 'tool-group';
+        toolItems.forEach(function(t){
+          var label = _getToolLabel(t.name);
+          var row = document.createElement('div');
+          row.className = 'tool-row' + (label ? ' has-label' : '');
+          row.dataset.s = t.ok === null ? 'pending' : (t.ok ? 'ok' : 'fail');
+          row.dataset.toolName = t.name || '';
+          row.dataset.args = t.args || '';
+          row.dataset.outcome = '';
+          var pv = _fmtPrimaryArg(t.name, t.args);
+          var nameHtml = label
+            ? '<span class="tr-label">' + _esc(label) + '</span>'
+            : '<span class="tr-name">' + _esc(t.name) + '</span>';
+          row.innerHTML = '<span class="tr-icon">' + (t.ok === null ? '◌' : (t.ok ? '✓' : '✗')) + '</span>' + nameHtml + (pv ? '<span class="tr-args">`' + _esc(pv) + '`</span>' : '');
+          _setToolOutcome(row, t.outcome || '');
+          _makeToolRowExpandable(row);
+          g.appendChild(row);
+        });
+        _finaliseToolGroup(g, toolItems.length); pane.appendChild(g); toolItems = [];
+      }
     function sysMsg(text, v){ var d = document.createElement('div'); d.className = 'msg sys ' + (v||''); d.innerHTML = '<div class="msg-label"></div><div class="msg-body"></div>'; d.querySelector('.msg-body').textContent = text; pane.appendChild(d); }
     function userMsg(text){
       hideEmpty();
@@ -1341,12 +1412,18 @@ const Replay = (function(){
       else if(kind === 'thinking'){ flushTok(); flushTools(); lastTok = false; hideEmpty(); pane.appendChild(_makeThinkingBlock(payload)); }
       else if(kind === 'tool'){
         if(lastTok) flushTok(); lastTok = false;
-        if(payload.startsWith('✓') || payload.startsWith('✗')){
-          var name2 = payload.slice(1).trim();
-          for(var ri = toolItems.length - 1; ri >= 0; ri--){ if(toolItems[ri].name === name2 && toolItems[ri].ok === null){ toolItems[ri].ok = payload.startsWith('✓'); break; } }
+        var info = _toolEventInfo(payload);
+        if(info.phase === 'result'){
+          for(var ri = toolItems.length - 1; ri >= 0; ri--){
+            if(toolItems[ri].name === info.name && toolItems[ri].ok === null){
+              toolItems[ri].ok = info.ok;
+              toolItems[ri].outcome = info.outcome || '';
+              break;
+            }
+          }
         } else {
-          flushTok(); var m = payload.match(/^([^(]+)\(?([\s\S]*?)\)?$/);
-          toolItems.push({name: m ? m[1].trim() : payload, args: m ? m[2].trim() : '', ok: null});
+          flushTok();
+          toolItems.push({name: info.name, args: info.args, ok: null, outcome: ''});
         }
       }
       else if(kind === 'iteration'){ flushTok(); flushTools(); lastTok = false; var mm = String(payload).match(/(\d+)\/(\d+)/); if(mm) sysMsg('— iteration ' + mm[1] + '/' + mm[2] + ' —', 'info'); }
@@ -1581,13 +1658,12 @@ const Agent = (function(){
         setSession(evt.data);
         break;
       case 'tool':{
-        var t = evt.data;
-        if(t.startsWith('✓') || t.startsWith('✗')){
-          Tools.resolve(t.slice(1).trim(), t.startsWith('✓'));
+        var t = _toolEventInfo(evt.data);
+        if(t.phase === 'result'){
+          Tools.resolve(t.name, t.ok, t.outcome);
         } else {
           Stream.finalize();
-          var m = t.match(/^([^(]+)\(?([\s\S]*?)\)?$/);
-          Tools.call(m ? m[1].trim() : t, m ? m[2].trim() : ''); _hadContent = true;
+          Tools.call(t.name, t.args); _hadContent = true;
         }
         break;
       }
@@ -2251,8 +2327,8 @@ const SessionInspect = (function(){
       _renderPlan({plan: typeof evt.data === 'object' ? evt.data : null});
       setTimeout(function(){ _fetchPlan(sid); }, 300);
     } else if(evt.type === 'tool'){
-      var raw = String(evt.data || '');
-      if(raw.startsWith('✓') || raw.startsWith('✗')){
+      var toolEvt = _toolEventInfo(evt.data);
+      if(toolEvt.phase === 'result'){
         // Any tool result may affect todos, tasks or plan — refresh all three
         _lastRefresh = Date.now();
         setTimeout(function(){ _fetchTodos(sid); _fetchTasks(sid); _fetchPlan(sid); }, 250);
