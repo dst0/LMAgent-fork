@@ -2139,7 +2139,7 @@ const Agent = (function(){
 // ─────────────────────────────────────────────────────────────────────────────
 // SSE STREAM CONNECTION
 // ─────────────────────────────────────────────────────────────────────────────
-(function initStream(){
+const StreamConn = (function(){
   var es = null, retryMs = 1000;
   function connect(){
     ConnDot.try();
@@ -2148,7 +2148,7 @@ const Agent = (function(){
     es.onmessage = function(e){ if(!e.data || e.data === '[DONE]') return; try{ Agent._handle(JSON.parse(e.data)); }catch(_){} };
     es.onerror = function(){ es.close(); ConnDot.err(); setTimeout(connect, retryMs); retryMs = Math.min(retryMs * 2, 30000); };
   }
-  connect();
+  return { connect };
 })();
 
 ImageUpload.initDragDrop();
@@ -2964,6 +2964,7 @@ const UI = (function(){
 Status.set('ready', '');
 Messaging.init();
 SessionInspect.init();
+StreamConn.connect();
 </script>
 </body>
 </html>
