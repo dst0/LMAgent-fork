@@ -1095,7 +1095,7 @@ def _process_tool_calls(
     ctx = get_current_context()
     todo_mgr = ctx.get("todo_manager")
     state_mgr = ctx.get("task_state_manager")
-    should_reconcile = bool(
+    should_reconcile = (
         non_bookkeeping_success or todo_op_count > 0 or task_op_called or work_progressed
     )
 
@@ -1125,7 +1125,7 @@ def _process_tool_calls(
         objective = state.objective if state and state.objective else next(
             (
                 str(m.get("content", "")).strip()
-                for m in messages
+                for m in reversed(messages)
                 if m.get("role") == "user" and str(m.get("content", "")).strip()
             ),
             "Complete the current task",
@@ -1138,10 +1138,14 @@ def _process_tool_calls(
                 (t for t in latest_todos if t.get("status") in ("in_progress", "pending")),
                 None,
             )
-            next_action = (
-                f"Continue: {active.get('description', '')}"
-                if active else "All tracked todos completed; verify deliverable and finish."
-            )
+            if active:
+                desc = str(active.get("description", "")).strip()
+                next_action = (
+                    f"Continue: {desc}" if desc
+                    else "Continue with the next in-progress or pending todo item."
+                )
+            else:
+                next_action = "All tracked todos completed; verify deliverable and finish."
         else:
             total = int(state.total_count) if state else 0
             processed = int(state.processed_count) if state else 0
