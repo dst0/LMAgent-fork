@@ -2760,9 +2760,10 @@ const SessionInspect = (function(){
     if(evt.type === 'connect'){
       var connectSid = evt.data && evt.data.session;
       var connectState = evt.data && evt.data.state;
-      if(_followCurrent) _setSid(connectSid || null);
       if(connectSid && (connectState === 'running' || connectState === 'waiting')){
         _followSession(connectSid, true);
+      } else if(_followCurrent){
+        _setSid(connectSid || null);
       }
       return;
     }
